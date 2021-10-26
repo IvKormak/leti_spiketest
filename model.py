@@ -1,83 +1,80 @@
-from neuron import Neuron
-from CameraFeed import CameraFeed
+from layer import Layer
+from utility import *
+from camera_feed import CameraFeed
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-class Model(object):
-	"""docstring for Model"""
-	def __init__(self, feed:CameraFeed, pixels:tuple, structure:tuple):
-		super(Model, self).__init__()
-		
-		self.neurons = []
-		self.frame = 0
-		self.feed = feed
-		self.pixels = pixels
-		self.genom = {pixels[x]:100 for x in range(len(pixels))}
-		self.data_structure = {'length':40, 'time_length':22}
-		self.structure = structure
 
-		for layer_n in range(len(self.structure)):
-			self.neurons.append([])
-			for neuron in range(self.structure[layer_n]):
-				self.add_neuron(self.genom, layer_n)
+class Network(object):
+    """docstring for Network"""
 
-	def add_neuron(self, genom, l):
-		self.neurons[l].append(Neuron(genom))
+    def __init__(self, timer: Timer, datafeed: CameraFeed, synapses: tuple, structure: tuple, **kwargs):
+        super(Network, self).__init__()
 
-	def set_clock(self, time):
-		self.clock = time
+        self.timer = timer
+        timer.add_listener(self)
 
-	def inhibit_neurons(self, fired_neuron):
-		for n in range(self.neuron_number):
-			neuron = self.neurons[n]
-			if n != fired_neuron:
-				neuron.inhibit(self.clock)
+        self.layers = []
+        self.frame = 0
+        self.clock = -1
+        self.feed = datafeed
+        self.structure = structure
 
-	def parse_aes(self, raw_data):
-		synapse = raw_data>>self.data_structure['time_length']
-		return (synapse,
-			raw_data&0x3fffff)
+        for layer_num in range(len(self.structure)):
+            genom = {x: 100 for x in synapses}
+            layer = Layer(
+                    timer=timer,
+                    neuron_number=self.structure[layer_num],
+                    layer_number=layer_num + 1,
+                    genom=genom,
+                    **kwargs
+            )
+            synapses = layer.get_synapses()
+            self.layers.append(layer)
 
-	def tick(self):
-		#добавить обработку работы сети по слоям с передачей вывода вглубь
-			raw_data = self.feed.read()
-		synapse, time = self.parse_aes(raw_data) #cutting bits 0:22
-		self.set_clock(time) #устанавливаем часы по битам 22:0 входного пакета данных
-		for n in range(self.neuron_number):
-			neuron = self.neurons[n]
-			neuron.update(self.clock, synapse)
+    def update_clock(self, time):
+        self.clock = time
 
-			if neuron.has_fired():
-				self.inhibit_neurons(n)
+    def __next__(self):
+        raw_data = self.feed.read()
+        input_data, time = parse_aes(raw_data)  # cutting bits 0:22
+        self.timer.set_time(time)  # устанавливаем часы по битам 22:0 входного пакета данных
+        for layer in self.layers:
+            layer.tick(input_data)
+            input_data = layer.get_fired_synapses()
+        self.frame += 1
+        return input_data
 
-		self.frame += 1
+    def __iter__(self):
+        return self
 
-	def get_journals(self):
-		return [neuron.log() for neuron in self.neurons[-1]]
+    def get_journals_from_layer(self, layer=-1):
+        return self.layers[layer].get_journals()
 
-def plot_journals(m):
-	journals = m.get_journals()
-	fig = plt.figure()
-	i=0
-	for j in journals:
-		i+=1
-		ax = fig.add_subplot(len(journals), 1, i)
-		xdata = [k for k in j]
-		ydata = [j[k] for k in j]
-		ax.plot(xdata, ydata, color='C'+str(i))
-	plt.show()
+    def get_genoms_from_layer(self, layer=-1):
+        return self.layers[layer].get_genoms()
+
+
+def plot_output():
+    xdata, ydata = [], []
+    for data in model.get_journals_from_layer():
+        xdata = [k for k in data]
+        ydata.append([data[k] for k in data])
+    #        ax.plot(xdata, ydata, color='C'+str(i))
+    ydata = [[ydata[j][i] for j in range(len(ydata))] for i in range(len(ydata[0]))]
+    l = plt.plot(xdata, ydata)
+    plt.draw()
+
 
 if __name__ == "__main__":
-	#(time+((polarty+((y_address+(x_address<<8))<<1))<<22))
 
-	#feed = CameraFeed(mode='bnw', frames=100000, timescale=3)
-	model = Model(feed, feed.get_pixels(), 2)
-	while(1):
-		try:
-			model.tick()
-		except:
-			break
-	plot_journals(model)
-	
-	
+    feed = CameraFeed(mode='bnw', frames=1000, timescale=30, period=240)
+    t = Timer(0)
+    model = Network(timer=t, datafeed=feed, synapses=feed.get_pixels(), structure=(28, 8), i_thres=1000)
+
+    fig, ax = plt.subplots()
+    for output in model:
+        pass
+    plot_output()
+    plt.show()

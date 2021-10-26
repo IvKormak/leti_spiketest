@@ -1,103 +1,130 @@
 from math import exp
 from random import gauss
+from utility import *
 IS_FIRED = True
 NOT_FIRED = False
 
+
 class Neuron(object):
+	def __init__(self):
+		pass
+
+
+class STDPNeuron(Neuron):
 	"""Implementaion for a spike NN neuron"""
-	def __init__(self, genom):
+
+	def __init__(self, timer: Timer, genom, param_set=Defaults, *args, **kwargs):
 		"""инициализация начальных параметров"""
 		super(Neuron, self).__init__()
-		self.i_thres = 700
-		self.t_ltp = 2*10**1
-		self.t_refrac = 10**2
-		self.t_inhibit = 1.5*10**1
-		self.t_leak = 5*10**1
-		self.w_min = 1 #1+-02
-		self.w_max = 1000 #1000+-200
-		self.a_dec = 50#50+-10
-		self.a_inc = 100#100+-20
-		#self.b_dec = 0
-		#self.b_inc = 0
+		timer.add_listener(self)
 
-		self.fired = NOT_FIRED
+		self.i_thres = param_set.i_thres
+		self.t_ltp = param_set.t_ltp
+		self.t_refrac = param_set.t_refrac
+		self.t_inhibit = param_set.t_inhibit
+		self.t_leak = param_set.t_leak
+		self.w_min = param_set.w_min
+		self.w_max = param_set.w_max
+		self.a_dec = param_set.a_dec
+		self.a_inc = param_set.a_inc
+		# self.b_dec     = param_set.b_dec
+		# self.b_inc     = param_set.b_inc
+
+		for k in kwargs:
+			self.__dict__[k] = kwargs[k]
+
+		self.fired = False
+		self.refractory = False
 		self.input_level = 0
-		self._initiate_weights_(genom) #адрес каждого веса задается битами 39:23 в входных данных
-		self.event_journal = {} #записаны аксоны, по которым пришли спайки, за tltp
+		self.event_journal = {}  # записаны аксоны, по которым пришли спайки, за tltp
 		self.input_journal = {}
-
 		self.t_spike = 0
 		self.t_last_spike = 0
-		self.inhibited_by = -1
+		self.inhibited_by = -1  # момент времени до начала симуляции
+		self.inhibited_on = -1
+		self.clock = -1
+
+		self._initiate_weights_(genom)  # адрес каждого веса задается битами 39:23 в входных данных
+
+	def update_clock(self, time):
+		self.clock = time
 
 	def _initiate_weights_(self, genom):
 		self.weights = {k: gauss(genom[k], 20) for k in genom}
 
-	def get_genom(self):
-		return self.weights
-
-	def update(self, time, synapse):
+	def update(self, data: list):
 		"""обработать пришедшие данные и обновить состояние нейрона. Основная функция"""
-		self.input_journal[time] = self.input_level #записать историю изменения входного сигнала
-		self.fired = NOT_FIRED #сбросить состояние срабатывания с предыдущего цикла обновления
-		if time > self.inhibited_by:
-			self.t_last_spike, self.t_spike = self.t_spike, time
-			self._journal_spike_(synapse)
-			self._spike_(synapse)
-			if self._excited_():
-				self._fire_()
-
-	def _journal_spike_(self, synapse):
-		"""записать пришедший спайк"""
-		self.event_journal[self.t_spike] = synapse
+		self.input_journal[self.clock] = int(self.fired)  # записать историю изменения выходного сигнала
+		self.fired = False  # сбросить состояние срабатывания с предыдущего цикла обновления
+		if self.clock > self.inhibited_by:
+			self.refractory = False
+			for synapse in data:
+				self.t_last_spike, self.t_spike = self.t_spike, self.clock
+				self._spike_(synapse)
 
 	def _spike_(self, synapse: int):
 		"""обработать пришедший импульс"""
-		self.input_level = self.input_level*exp(-(self.t_spike-self.t_last_spike)/self.t_leak)+self.weights[synapse]
+		self.event_journal[self.t_spike] = synapse
+		self.input_level = self.input_level * exp(-(self.t_spike - self.t_last_spike) / self.t_leak) + self.weights[
+			synapse]
 
-	def _excited_(self):
+	def check_if_excited(self):
 		"""проверить не накопился ли потенциал действия выше порога и изменить веса аксонов"""
-		if self.input_level > self.i_thres:
-			return True
-		return False
+		if self.input_level >= self.i_thres:
+			self.input_level = 0
+			self.fired = True
+			self._set_refractory_period_()
+			increase_weights = [
+				self.event_journal[entry]
+				for entry in self.event_journal
+				if int(entry) >= self.t_spike - self.t_ltp
+			]
+			for synapse in self.weights:
+				if synapse in increase_weights:
+					self._synapse_inc_(synapse)
+				else:
+					self._synapse_dec_(synapse)
 
-	def _fire_(self):
-		"""обработать срабатывание нейрона"""
-		self.input_level = 0
-		self.fired = IS_FIRED
-		self._refrac_()
-		increase_weights = [self.event_journal[entry] for entry in self.event_journal if int(entry) >= self.t_spike-self.t_ltp]
-		for synapse in self.weights:
-			if synapse in increase_weights:
-				self._synapse_inc_(synapse)
-			else:
-				self._synapse_dec_(synapse)
-		self._refrac_()
-
-	def _refrac_(self):
-		#эта функция выполняется только когда нейрон активен и только что сработал, поэтому ориентируется по внутреннему времени
+	def _set_refractory_period_(self):
+		# эта функция выполняется только когда нейрон активен и только что сработал
+		# так как чтобы нейрон сработал он должен быть активен сравнение текущего
+		# времени с сроком неактивности не производится
+		self.refractory = True
 		self.inhibited_by = self.t_spike + self.t_refrac
 
 	def _synapse_inc_(self, synapse: int):
-		"""усилить связь с аксоном, сработавшим прямо перед срабатыванием нейрона"""
+		"""усилить связь с синапсами, сработавшими прямо перед срабатыванием нейрона"""
 		self.weights[synapse] += self.a_inc
+		if self.weights[synapse] > self.w_max:
+			self.weights[synapse] = self.w_max
 
 	def _synapse_dec_(self, synapse: int):
-		"""ослабить связи с аксонами, не сработавшими перед срабатыванием нейрона"""
+		"""ослабить связи с синапсами, не сработавшими перед срабатыванием нейрона"""
 		self.weights[synapse] -= self.a_dec
+		if self.weights[synapse] < self.w_min:
+			self.weights[synapse] = self.w_min
 
 	def has_fired(self):
 		"""проверить не сработал ли нейрон"""
 		return self.fired
 
-	def inhibit(self, time):
-		#эта функция вызывается только из модели в случае срабатывания другого нейрона, поэтому ориентируется по внешнему времени
-		if self.inhibited_by < time:
-			self.inhibited_by = time + self.t_inhibit
-		if self.inhibited_by >= time and self.inhibited_by - self.t_refrac < time: #проверяем, не добавили ли к этому нейрону уже время ингибиции. inhibited_by никогда не может превышать clock больше чем на сумму t_inhibit и t_refrac
-			self.inhibited_by += self.t_inhibit #в случае когда нейрон уже находится 
-				#в состоянии восстановления увеличиваем срок восстановления
+	def inhibit(self):
+		# эта функция вызывается только из модели в случае срабатывания другого нейрона
+		# так как нейрон может быть неактивен, необходимо проверить сроки
+		if (self.inhibited_on < self.clock) or not self.refractory:  # не надо дважды ингибировать в один фрейм
+			self.inhibited_on = self.clock
+			self.inhibited_by = self.clock + self.t_inhibit
+		elif self.refractory and self.inhibited_by - self.t_refrac < self.inhibited_on:
+			# в случае когда нейрон уже находится
+			# в состоянии восстановления увеличиваем срок восстановления
+			# но проверяем, не добавили ли к этому нейрону уже время ингибиции.
+			# inhibited_by никогда не может превышать clock больше чем на сумму t_inhibit и t_refrac
+			self.inhibited_by += self.t_inhibit
 
 	def log(self):
 		return self.input_journal
+
+	def get_genom(self):
+		return self.weights
+
 		

@@ -1,20 +1,36 @@
-from neuron import Neuron
+from neuron import *
 from utility import *
+
 
 class Layer(object):
     """docstring for Layer"""
-    def __init__(self, timer:Timer, neuron_number, layer_number, genom, **kwargs):
+
+    def __init__(self, timer: Timer, neuron_number, layer_number, genom, **kwargs):
         super(Layer, self).__init__()
         timer.add_listener(self)
         self.neuron_number = neuron_number
-        self.neurons = [Neuron(timer=timer, genom=genom, **kwargs) for x in range(neuron_number)]
+        self.neurons = [STDPNeuron(timer=timer, genom=genom, **kwargs) for _ in range(neuron_number)]
         self.layer_number = layer_number
+        self.clock = -1
+
+    def get_synapses(self):
+        return [
+            (self.layer_number << 8) + (n << 1)
+            for n in range(len(self.neurons))
+        ]
+
+    def get_fired_synapses(self):
+        return [
+                (self.layer_number << 8) + (n << 1)
+                for n in range(len(self.neurons))
+                if self.neurons[n].has_fired()
+            ]
 
     def update_clock(self, time):
         self.clock = time
 
     def tick(self, input_spikes):
-        if type(input_spikes) == type(int()):
+        if isinstance(input_spikes, int):
             input_spikes = list([input_spikes])
         for n in range(self.neuron_number):
             self.neurons[n].update(input_spikes)
@@ -28,16 +44,6 @@ class Layer(object):
             neuron = self.neurons[n]
             if n != fired_neuron:
                 neuron.inhibit()
-
-    def get_output(self):
-        return list(map(
-            lambda x: construct_aes(x, self.clock), 
-            [
-                (self.layer_number<<8)+(n<<1) 
-                for n in range(len(self.neurons)) 
-                if self.neurons[n].has_fired()
-            ]
-        ))
 
     def get_journals(self):
         return [neuron.log() for neuron in self.neurons]
