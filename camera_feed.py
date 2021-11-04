@@ -1,46 +1,80 @@
-from math import sin, pi
-from random import random
 from utility import *
+
+from math import sin, pi
+import numpy as np
+import imageio as iio
+from random import random
 
 
 class CameraFeed(object):
     """docstring for CameraFeed"""
 
-    def __init__(self, datastream=(), timescale=100, frames=1000, period=100, mode='tuple'):
+    def __init__(self, source=(), x_dim=28, y_dim=28, mode='tuple', frames=-1, start = 0):
         super(CameraFeed, self).__init__()
-        if mode == 'bnw':
-            x_dim, y_dim = 1, 8
-            self.pixels = {
-                polarity + ((y + (x << 8)) << 1)
-                for x in range(1, x_dim + 1)
-                for y in range(1, y_dim + 1)
-                for polarity in range(2)
-            }
-            self.datastream = self._blackandwhite_(frames, period, timescale, x_dim, y_dim)
-        elif mode == 'tuple':
-            self.datastream = iter(datastream)
+        if mode == 'file':
+            self.file = open(source, 'r')
+            self.length = 10
+            self.datastream = self._file_read_
+            self.pixels = []
+            for k in range(x_dim):
+                for m in range(y_dim):
+                    for p in range(2):
+                        pixel = format(k, '02x')+format(m, '02x')+str(p*8)
+                        self.pixels.append(pixel)
+            self.frames = frames
+            self.frames_max = frames
+            self.start = 0
+            if start:
+                self.start = start
+                for i in range(start):
+                    self.read()
+
+    def reset(self):
+        self.file.seek(0, 0)
+        self.frames = self.frames_max
+        if self.start:
+            for i in range(self.start):
+                self.read()
 
     def read(self):
-        return next(self.datastream)
+        return self.datastream()
 
     def get_pixels(self):
         return list(self.pixels)
 
-    def _blackandwhite_(self, frames, period, timescale, x_dim, y_dim):
-        for frame in range(1, frames + 1):
-            for y in range(1, y_dim + 1):
-                for x in range(1, x_dim + 1):
-                    n = (frame - 1) * (x_dim) * (y_dim) + (y - 1) * (x_dim) + x - 1
-                    phase = sin(frame / period * 2 * pi) / 2
-                    polarity = round(random() / 2 + phase)
-                    address = polarity + ((y + (x << 8)) << 1)
-                    time = n * timescale & 0x3fffff
-                    combined = (address << 22) + time
-                    yield (combined)
+    def _file_read_(self):
+        if self.frames > 0:
+            self.frames -= 1
+        string = ""
+        hexadecimals = "0123456789abcdef"
+        while char := self.file.read(1):
+            if char in hexadecimals:
+                string += char
+            if len(string) == self.length:
+                break
+        if string == '' or not(self.frames):
+            raise StopIteration
+        return string
 
 
 if __name__ == "__main__":
-    feed = CameraFeed(mode='bnw', frames=1000, timescale=30)
-    for spike in feed.datastream:
-        print(format(spike >> 22, '#017b'), spike & 0x3fffff)
-        print(format(spike, '#040b'))
+    feed = CameraFeed(mode='file', source="out.bin")
+    feed.reset()
+    matrix = np.zeros((28,28))
+    array = []
+    num = 0
+    while 1:
+        try:
+            spike = feed.read()
+            synapse = parse_aes(spike)[0][0]
+            x_coord = int(synapse[0:2], base=16)
+            y_coord = int(synapse[2:4], base=16)
+            color = (synapse[4]!='0')*255
+            matrix[y_coord][x_coord] = color
+            num = num+1
+            #iio.imwrite('raw/'+str(num)+'.png', matrix)
+            array.append(matrix.copy())
+        except:
+            break
+    iio.mimwrite('animation.gif', array, duration=0.01)
+
