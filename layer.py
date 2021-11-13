@@ -24,18 +24,21 @@ class Layer(object):
 
     def get_synapses(self):
         return [
-            format(self.layer_number, '02x')+
+            format(self.layer_number, '02x') +
             format(n, '02x')
             for n in range(len(self.neurons))
         ]
 
     def get_fired_synapses(self):
         return [
-                format(self.layer_number, '02x')+
+                format(self.layer_number, '02x') +
                 format(n, '02x')
                 for n in range(len(self.neurons))
                 if self.neurons[n].has_fired()
             ]
+
+    def get_fired_neurons(self):
+        return [1 if neuron.has_fired() else 0 for neuron in self.neurons]
 
     def update_clock(self, time):
         self.clock = time
@@ -43,7 +46,9 @@ class Layer(object):
     def tick(self, input_spikes):
         if isinstance(input_spikes, int):
             input_spikes = list([input_spikes])
-        for n in range(self.neuron_number):
+        nns = list(range(self.neuron_number))
+        shuffle(nns)
+        for n in nns:
             self.neurons[n].update(input_spikes)
         for n in range(self.neuron_number):
             self.neurons[n].check_if_excited()
@@ -51,9 +56,7 @@ class Layer(object):
                 self.inhibit_neurons(n)
 
     def inhibit_neurons(self, fired_neuron):
-        nns = list(range(self.neuron_number))
-        shuffle(nns)
-        for n in nns:
+        for n in range(self.neuron_number):
             neuron = self.neurons[n]
             if n != fired_neuron:
                 neuron.inhibit()
@@ -66,5 +69,23 @@ class Layer(object):
     def get_output_journals(self):
         return [neuron.get_output_journal() for neuron in self.neurons]
 
-    def get_genoms(self):
+    def get_genom(self):
         return [neuron.get_genom() for neuron in self.neurons]
+
+    def random_genom(self):
+        return [neuron.random_genom() for neuron in self.neurons]
+
+    def set_genom(self, genom):
+        for n_num in range(len(self.neurons)):
+            self.neurons[n_num].set_genom(genom[n_num])
+
+    def mutate(self, genom1, genom2):
+        for n_num in range(len(self.neurons)):
+            self.neurons[n_num].mutate(genom1[n_num], genom2[n_num])
+
+    def rearrange_neurons(self, new_order):
+        new_neurons = [False]*len(new_order)
+        for n in range(len(new_order)):
+            new_neurons[new_order[n]] = self.neurons[n]
+        self.neurons = new_neurons
+

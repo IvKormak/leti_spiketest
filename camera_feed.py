@@ -1,15 +1,13 @@
 from utility import *
 
-from math import sin, pi
 import numpy as np
 import imageio as iio
-from random import random
 
 
 class CameraFeed(object):
     """docstring for CameraFeed"""
 
-    def __init__(self, source=(), x_dim=28, y_dim=28, mode='tuple', frames=-1, start = 0):
+    def __init__(self, source=(), x_dim=28, y_dim=28, mode='tuple', frames=-1, start=0):
         super(CameraFeed, self).__init__()
         if mode == 'file':
             self.file = open(source, 'r')
@@ -52,7 +50,7 @@ class CameraFeed(object):
                 string += char
             if len(string) == self.length:
                 break
-        if string == '' or not(self.frames):
+        if string == '' or not self.frames:
             raise StopIteration
         return string
 
@@ -60,21 +58,16 @@ class CameraFeed(object):
 if __name__ == "__main__":
     feed = CameraFeed(mode='file', source="out.bin")
     feed.reset()
-    matrix = np.zeros((28,28))
+    matrix = np.zeros((28, 28))
     array = []
     num = 0
-    while 1:
-        try:
-            spike = feed.read()
+    while spike := feed.read():
             synapse = parse_aes(spike)[0][0]
             x_coord = int(synapse[0:2], base=16)
             y_coord = int(synapse[2:4], base=16)
-            color = (synapse[4]!='0')*255
+            color = (synapse[4] != '0')*255
             matrix[y_coord][x_coord] = color
             num = num+1
-            #iio.imwrite('raw/'+str(num)+'.png', matrix)
+            # iio.imwrite('raw/'+str(num)+'.png', matrix)
             array.append(matrix.copy())
-        except:
-            break
     iio.mimwrite('animation.gif', array, duration=0.01)
-

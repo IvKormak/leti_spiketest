@@ -2,7 +2,7 @@ from utility import *
 from timer import *
 
 from math import exp
-from random import gauss
+from random import randrange, random
 IS_FIRED = True
 NOT_FIRED = False
 
@@ -15,7 +15,7 @@ class Neuron(object):
 class STDPNeuron(Neuron):
     """Implementaion for a spike NN neuron"""
 
-    def __init__(self, timer: Timer, genom, param_set=Defaults, learn=True, *args, **kwargs):
+    def __init__(self, timer: Timer, genom, param_set=Defaults, learn=True, **kwargs):
         """инициализация начальных параметров"""
         super(Neuron, self).__init__()
         timer.add_listener(self)
@@ -31,7 +31,7 @@ class STDPNeuron(Neuron):
         self.a_inc = param_set.a_inc
         # self.b_dec     = param_set.b_dec
         # self.b_inc     = param_set.b_inc
-
+        self.randmut = param_set.randmut
 
         self.learn = learn
 
@@ -50,7 +50,7 @@ class STDPNeuron(Neuron):
         self.inhibited_on = -1
         self.clock = -1
 
-        self._initiate_weights_(genom)  # адрес каждого веса задается битами 39:23 в входных данных
+        self.set_genom(genom)  # адрес каждого веса задается битами 39:23 в входных данных
 
     def update_clock(self, time):
         self.clock = time
@@ -60,9 +60,9 @@ class STDPNeuron(Neuron):
         self.t_last_spike = 0
         self.inhibited_by = -1  # момент времени до начала симуляции
         self.inhibited_on = -1
-
-    def _initiate_weights_(self, genom):
-        self.weights = {k: gauss(genom[k], 20) for k in genom}
+        self.event_journal = {}  # записаны аксоны, по которым пришли спайки, за tltp
+        self.input_journal = []
+        self.output_journal = []
 
     def update(self, data: list):
         """обработать пришедшие данные и обновить состояние нейрона. Основная функция"""
@@ -89,12 +89,13 @@ class STDPNeuron(Neuron):
             self.input_level = 0
             self.fired = True
             self._set_refractory_period_()
-            for entry in self.event_journal:
-                synapse = self.event_journal[entry]
-                if int(entry) >= self.t_spike - self.t_ltp:
-                    self._synapse_inc_(synapse)
-                else:
-                    self._synapse_dec_(synapse)
+            if self.learn:
+                for entry in self.event_journal:
+                    synapse = self.event_journal[entry]
+                    if int(entry) >= self.t_spike - self.t_ltp:
+                        self._synapse_inc_(synapse)
+                    else:
+                        self._synapse_dec_(synapse)
         else:
             self.output_journal.append(0)
 
@@ -146,4 +147,25 @@ class STDPNeuron(Neuron):
     def get_genom(self):
         return self.weights
 
-        
+    def random_genom(self):
+        return {k: randrange(self.w_min, self.w_max) for k in self.weights}
+
+    def set_genom(self, genom):
+        self.weights = genom
+
+    def mutate(self, genom1, genom2):
+        for synapse in self.weights:
+            if random() > self.randmut:
+                if random() < 0.5:
+                    self.weights[synapse] = genom1[synapse]
+                else:
+                    self.weights[synapse] = genom2[synapse]
+            else:
+                self.weights[synapse] = randrange(self.w_min, self.w_max)
+            if self.weights[synapse] > self.w_max:
+                self.weights[synapse] = self.w_max
+            if self.weights[synapse] < self.w_min:
+                self.weights[synapse] = self.w_min
+
+
+
