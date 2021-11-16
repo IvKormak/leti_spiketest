@@ -44,11 +44,15 @@ class Defaults(object):
     UP = 1
     DOWN = 2
     LEFT = 3
-    RIGHT = 4
+    UPLEFT = 4
+    UPRIGHT = 5
+    DOWNLEFT = 6
+    DOWNRIGHT = 7
 
-    UPLEFT = 5
-    UPRIGHT = 6
-    DOWNLEFT = 7
-    DOWNRIGHT = 8
-
-    answers = [UP, RIGHT, DOWN, DOWNRIGHT, UP, UPRIGHT, UP, DOWN, DOWNLEFT, DOWNRIGHT, UPLEFT]
+    files = ["trace_up.bin",
+             "trace_down.bin",
+             "trace_right.bin",
+             "trace_upleft.bin",
+             "trace_upright.bin",
+             "trace_downleft.bin",
+             "trace_downright.bin"]

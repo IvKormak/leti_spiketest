@@ -1,7 +1,7 @@
 from utility import *
 from timer import *
 
-from math import exp
+from math import exp, floor
 from random import randrange, random
 IS_FIRED = True
 NOT_FIRED = False
@@ -153,13 +153,11 @@ class STDPNeuron(Neuron):
     def set_genom(self, genom):
         self.weights = genom
 
-    def mutate(self, genom1, genom2):
+    def mutate(self, *args):
         for synapse in self.weights:
             if random() > self.randmut:
-                if random() < 0.5:
-                    self.weights[synapse] = genom1[synapse]
-                else:
-                    self.weights[synapse] = genom2[synapse]
+                n = round((len(args)-1)*random())
+                self.weights[synapse] = args[n][synapse]
             else:
                 self.weights[synapse] = randrange(self.w_min, self.w_max)
             if self.weights[synapse] > self.w_max:

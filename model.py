@@ -7,9 +7,13 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
-from random import shuffle
+import random
 from os import mkdir
 
+#   проблемы
+#   в выходных журналах нейронов больше записей, чем прошло импульсов
+#
+#
 
 class Network(object):
     """docstring for Network"""
@@ -44,9 +48,9 @@ class Network(object):
 
     def reset(self):
         self.feed.reset()
+        self.frame = 0
 
     def cycle_through(self):
-        self.timer.reset()
         for o in self:
             pass
 
@@ -75,16 +79,16 @@ class Network(object):
         if not output:
             return self.layers[layer].get_input_journals()
 
-    def calculate_fitness(self):
+    def calculate_fitness(self, answers):
         R = np.array(self.get_journals_from_layer())
-        C = np.array([[1 if (Defaults.answers[j//448] == i) else 1j for j in range(4912)] for i in range(1, 9)])
+        C = np.array(answers)
         C = C.transpose()
         F = np.matmul(R, C)
         score = 0
         cols = list(range(F.shape[1]))
         rows = list(range(F.shape[0]))
-        shuffle(rows)
-        preferred_order = [0]*8
+        random.shuffle(rows)
+        preferred_order = [0]*number_of_categories
         for i in rows:
             m = 0
             n = cols[0]
@@ -113,70 +117,97 @@ class Network(object):
         for l_num in range(len(self.layers)):
             self.layers[l_num].set_genom(genom[l_num])
 
-    def mutate(self, genom1=False, genom2=False):
-        if not genom1 and not genom2:
+    def mutate(self, *args):
+        if len(args) == 0:
             self.set_genom(self.random_genom())
-        elif not genom2:
-            genom2 = genom1
         else:
             for l_num in range(len(self.layers)):
-                self.layers[l_num].mutate(genom1[l_num], genom2[l_num])
+                self.layers[l_num].mutate(*[genom[l_num] for genom in args])
 
 
 def save_output_to_file(indicator, journals):
     xdata, ydata = [], []
     xdata = range(len(journals[0]))
     for data in journals:
-        ydata.append([k*ans_amp for k in data])
-    ydata.append(ans)
+        ydata.append([k for k in data])
     ydata = [[ydata[j][i] for j in range(len(ydata))] for i in range(len(ydata[0]))]
     plt.plot(xdata, ydata)
     plt.savefig(str(indicator)+'.png')
     plt.close()
 
 if __name__ == "__main__":
+
+    input_layer = 28*28
+    output_layer = 8
+    number_of_categories = 8
+
+    generation_num = 10
+    specimen_num = 5
+    traces_num = 200
+
     timer = Timer(0)
-    feed_opts = {'mode': 'file', 'source': 'out.bin'}
+    feed_opts = {'mode': 'file', 'source': 'trace_up.bin'}
     feed = CameraFeed(**feed_opts)
-    model = Network(t=timer, datafeed=feed, structure=(28*28, 8), wta=1, learn=True)
+
+    model = Network(t=timer, datafeed=feed, structure=(input_layer, output_layer), wta=True, learn=True)
     best_scores = []
-    best_two_genoms = [False, False]
-    ans = [Defaults.answers[i// 498] for i in range(4912)]
-    ans_amp = max(ans)
+    best_genoms = []
+    traces = []
     folder = f"exp{int(time.time())}"
     mkdir(folder)
 
-    for i in range(50):
+    for i in range(generation_num):
+        # number of generations
         genoms = []
         scores = []
         journals = []
         print(f"=====generation {i}=====")
-        for j in range(7):
+        for j in range(specimen_num):
+            #number of specimen in generation
+            answers = [[], [], [], [], [], [], [], []]
+            traces = [random.choice(Defaults.files) for _ in range(traces_num)]
             starttime = time.time()
+            model.mutate(*best_genoms)
+            tot = 0
+            timer.reset()
+            for n in range(traces_num):
+                #number of traces to train with
+                feed.load(traces[n])
+                model.cycle_through()
 
-            model.mutate(*best_two_genoms)
+                index_of_trace = Defaults.files.index(traces[n])
+                answers[index_of_trace].append([tot, model.frame])
+                tot += model.frame
 
-            model.cycle_through()
+                model.reset()
 
-            fitness = model.calculate_fitness()
-            print(time.time() - starttime, fitness)
-            scores.append(fitness)
             genoms.append(model.get_genom())
-
             journals.append(model.get_journals_from_layer())
 
-            timer.reset()
+            ans = np.zeros((number_of_categories, tot))
+
+            for i in range(ans.shape[0]):
+                #create matrix of answers
+                row = np.zeros(tot)
+                for entry in answers[i]:
+                    row += np.hstack((np.zeros(entry[0]),
+                                      np.ones(entry[1]),
+                                      np.zeros(tot-sum(entry))
+                                      ))
+                ans[i] = row
+
+            fitness = model.calculate_fitness(ans)
+            scores.append(fitness)
+            print(time.time() - starttime, fitness)
 
         s_scores = list(reversed(sorted(scores)))
         best_scores.append(s_scores[0])
         index1 = scores.index(s_scores[0])
         index2 = scores.index(s_scores[1])
-        best_two_genoms = (genoms[index1], genoms[index2])
-        save_output_to_file(f"{folder}/stage{i}fit{s_scores[0]}", journals[index1])
-        save_output_to_file(f"{folder}/stage{i}fit{s_scores[1]}", journals[index2])
+        best_genoms = (genoms[index1], genoms[index2])
 
     plt.plot(list(range(len(best_scores))), best_scores)
     plt.show()
     plt.plot(list(range(len(best_scores))), best_scores)
     plt.savefig(f"{folder}/graph.png")
-    pickle.dump(best_two_genoms[0], open(f"{folder}/f{s_scores[0]}.genom", "wb"))
+    pickle.dump(best_genoms[0], open(f"{folder}/f{s_scores[0]}.genom", "wb"))

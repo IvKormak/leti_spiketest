@@ -79,9 +79,9 @@ class Layer(object):
         for n_num in range(len(self.neurons)):
             self.neurons[n_num].set_genom(genom[n_num])
 
-    def mutate(self, genom1, genom2):
+    def mutate(self, *args):
         for n_num in range(len(self.neurons)):
-            self.neurons[n_num].mutate(genom1[n_num], genom2[n_num])
+            self.neurons[n_num].mutate(*[genom[n_num] for genom in args])
 
     def rearrange_neurons(self, new_order):
         new_neurons = [False]*len(new_order)
