@@ -1,213 +1,556 @@
-from layer import Layer
-from utility import *
-from camera_feed import CameraFeed
-from timer import *
+from camera_feed import *
 
-import time
 import matplotlib.pyplot as plt
 import numpy as np
-import pickle
 import random
-from os import mkdir
+import time
+import pickle
 
-#   проблемы
-#   в выходных журналах нейронов больше записей, чем прошло импульсов
-#
-#
+class Timer(object):
+    """docstring for Timer"""
 
-class Network(object):
-    """docstring for Network"""
+    def __init__(self, time=0):
+        super(Timer, self).__init__()
+        self.clock = time
+        self.start_time = time
+        self.listeners = []
 
-    def __init__(self, t: Timer, datafeed: CameraFeed, structure: tuple, **kwargs):
-        super(Network, self).__init__()
+    def set_time(self, time):
+        self.clock = time
+        self.announce()
 
-        self.timer = t
-        t.add_listener(self)
-
-        self.layers = []
-        self.frame = 0
-        self.clock = -1
-        self.feed = datafeed
-        self.structure = structure
-
-        self.kwargs = kwargs
-
-        synapses = self.feed.get_pixels()
-
-        for layer_num in range(len(self.structure)):
-            genom = {x: 100 for x in synapses}
-            layer = Layer(
-                    timer=t,
-                    neuron_number=self.structure[layer_num],
-                    layer_number=layer_num + 1,
-                    genom=genom,
-                    **kwargs
-            )
-            synapses = layer.get_synapses()
-            self.layers.append(layer)
+    def get_time(self):
+        return self.clock
 
     def reset(self):
-        self.feed.reset()
+        self.set_time(0)
+        for listener in self.listeners:
+            listener.reset()
+
+    def hard_reset(self):
+        self.set_time(0)
+        for listener in self.listeners:
+            listener.hard_reset()
+
+    def add_listener(self, listener):
+        self.listeners.append(listener)
+
+    def remove_listener(self, listener):
+        self.listeners.remove(listener)
+
+    def announce(self):
+        for listener in self.listeners:
+            listener.update_clock(self.clock)
+
+
+class SyncedObject(object):
+    def __init__(self, *args, **kwargs):
+        self.clock = 0
+        try:
+            kwargs['timer'].add_listener(self)
+        except KeyError:
+            raise Exception("Невозможно инициализировать объект без таймера!")
+
+    def update_clock(self, time:int):
+        self.clock = time
+
+    def reset(self):
+        self.clock = 0
+
+    def hard_reset(self):
+        self.reset()
+
+class Logger(SyncedObject):
+    """Класс логгера. Он должен инициализироваться до сети!"""
+    def __init__(self, *args, **kwargs):
+        super(Logger, self).__init__(*args, **kwargs)
+        self.watches = []
+        self.logs = {}
+
+    def add_watch(self, watch):
+        if not hasattr(watch, 'output'):
+            raise AttributeError("За объектом нельзя следить, нет свойства output")
+        self.watches.append(watch)
+        self.logs[watch] = {}
+
+    def collect_watches(self):
+        clock = self.clock
+        for watch in self.watches:
+            self.logs[watch][clock] = watch.output
+
+    def get_logs(self, watch):
+        try:
+            return self.logs[watch]
+        except KeyError:
+            raise KeyError("За этим объектом не происходит слежения")
+
+    def update_clock(self, time:int):
+        self.collect_watches()
+        super(Logger, self).update_clock(time)
+
+class Teacher:
+    def __init__(self):
+        self.output = 0
+
+class SpikeNetwork(SyncedObject):
+    """docstring for Network"""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.layers = []
+        self.frame = 0
+
+        try:
+            self.feed = kwargs['datafeed']
+        except KeyError:
+            raise Exception("Невозможно инициализировать сеть без потока входных данных!")
+
+        try:
+            self.logger = kwargs['logger']
+        except KeyError:
+            raise Exception("Невозможно инициализировать сеть без логгера!")
+
+        if 'learn' in kwargs:
+            if kwargs['learn']:
+                try:
+                    self.teacher = kwargs['teacher']
+                except KeyError:
+                    raise Exception("Невозможно инициализировать сеть без учителя!")
+
+        try:
+            synapses = self.feed.get_pixels()
+            for layer_num, neuron_num in enumerate(kwargs['structure']):
+                weights = {x: 0 for x in synapses}
+                layer = STDPLayer(
+                        neuron_number=neuron_num,
+                        layer_number=layer_num + 1,
+                        weights=weights,
+                        **kwargs
+                )
+                synapses = layer.get_synapses()
+                self.layers.append(layer)
+        except KeyError:
+            raise Exception("Невозможно инициализировать сеть не указав структуру!")
+
+    def set_param_set(self, param_set):
+        for layer in self.layers:
+            layer.set_param_set(param_set)
+
+    def reset(self):
+        super().reset()
         self.frame = 0
 
     def cycle_through(self):
+        # впустую прогоняются все данные для обучения
         for o in self:
             pass
 
-    def update_clock(self, t):
-        self.clock = t
-
-    def set_feed(self, datafeed):
+    def set_feed(self, datafeed: DataFeed):
         self.feed = datafeed
 
     def __next__(self):
-        self.raw_data = self.feed.read()
-        input_data, t = parse_aes(self.raw_data)  # cutting bits 0:22
-        self.timer.set_time(t)  # устанавливаем часы по битам 22:0 входного пакета данных
+        # читаем следующий сигнал с камеры
+        self.raw_data = next(self.feed)
+        # парсим данные
+        input_data, t = parse_aer(self.raw_data)  # cutting bits 0:22
+        # указываем слоям срабатывать по очереди и передаём результаты вглубь
         for layer in self.layers:
-            layer.tick(input_data)
-            input_data = layer.get_fired_synapses()
+            layer.update(input_data)
+            input_data = layer.output
+        # увеличиваем счётчик шагов, выдаём значение с выходного слоя
         self.frame += 1
-        return self.layers[-1].get_fired_neurons()
+        return input_data
 
     def __iter__(self):
+        # для соответствия стандарту итератора
         return self
 
-    def get_journals_from_layer(self, layer=-1, output=True):
-        if output:
-            return self.layers[layer].get_output_journals()
-        if not output:
-            return self.layers[layer].get_input_journals()
+    def get_journals_from_layer(self, layer=-1):
+        # выдаем журналы событий с узанного слоя
+        # по умолчанию - выходной
+        journals = []
+        for neuron in self.layers[layer].neurons:
+            journals.append(self.logger.get_logs(neuron))
+        return journals
 
-    def calculate_fitness(self, answers):
-        R = np.array(self.get_journals_from_layer())
-        C = np.array(answers)
-        C = C.transpose()
+    def calculate_fitness(self):
+        # считаем фитнесс функцию от числа правильных и неправильных ответов
+        neuron_journals = self.get_journals_from_layer()
+        teacher_journal = self.logger.get_logs(self.teacher)
+        R = [[] for _ in neuron_journals]
+        C = []
+        for key in teacher_journal.keys():
+            if key > 0:
+                for n in range(len(R)):
+                    R[n].append(neuron_journals[n][key])
+                C.append(teacher_journal[key])
+        R, C = np.array(R), np.array(C)
         F = np.matmul(R, C)
         score = 0
-        cols = list(range(F.shape[1]))
-        rows = list(range(F.shape[0]))
-        random.shuffle(rows)
-        preferred_order = [0]*number_of_categories
-        for i in rows:
-            m = 0
-            n = cols[0]
-            for j in cols:
-                if np.real(F[i][j]) > m:
-                    m = F[i][j]
-                    n = j
-            score += m
-            cols.remove(n)
-            preferred_order[i] = n
+        trace_numbers = list(range(C.shape[1]))
+        neuron_numbers = list(range(R.shape[0]))
+        random.shuffle(neuron_numbers)
+        preferred_order = [0 for _ in neuron_numbers]
+        for neuron_number in neuron_numbers:
+            maximum_score_for_trace = 0
+            trace_best_guessed = trace_numbers[0]
+            for trace_number in trace_numbers:
+                if np.real(F[neuron_number][trace_number]) > maximum_score_for_trace:
+                    maximum_score_for_trace = F[neuron_number][trace_number]
+                    trace_best_guessed = trace_number
+            score += maximum_score_for_trace
+            trace_numbers.remove(trace_best_guessed)
+            preferred_order[neuron_number] = trace_best_guessed
+        # установим выходные нейроны в таком порядке чтобы
+        # порядковый номер нейрона соответствовал порядковому
+        # номеру направления, которое он определяет лучше всего
         self.layers[-1].rearrange_neurons(preferred_order)
-        score = (-100/np.log(np.real(score))+100)*(
-                    np.real(score)/(
-                        np.real(score)+np.imag(score)
-                    )
-                )
-        return score
+        total_ans = np.real(score)+np.imag(score)
+        right_ans = np.real(score)
+        # +1 в знаменателе решает проблему деления на 0 когда всё очень плохо
+        score = (right_ans/(total_ans+1)-1/C.shape[1])*right_ans
+        return (score, right_ans, total_ans, f"{right_ans/(total_ans+1)*100}%")
 
-    def get_genom(self):
-        return [layer.get_genom() for layer in self.layers]
+    def get_weights(self):
+        return [layer.get_weights() for layer in self.layers]
 
-    def random_genom(self):
-        return [layer.random_genom() for layer in self.layers]
+    def set_random_weights(self):
+        for layer in self.layers:
+            layer.set_random_weights()
 
-    def set_genom(self, genom):
-        for l_num in range(len(self.layers)):
-            self.layers[l_num].set_genom(genom[l_num])
+    def set_weights(self, weight:list):
+        for l_num, layer in enumerate(self.layers):
+            layer.set_weight(weight[l_num])
 
-    def mutate(self, *args):
-        if len(args) == 0:
-            self.set_genom(self.random_genom())
+    def mutate(self, *weights):
+        if len(weights) == 0:
+            self.set_random_weights()
         else:
-            for l_num in range(len(self.layers)):
-                self.layers[l_num].mutate(*[genom[l_num] for genom in args])
+            for l_num, layer in enumerate(self.layers):
+                # т.к. на входе массив двух геномов, необходимо вырезать из каждого из них
+                # кусок соответствующий нужному нам слою
+                layer.mutate(*[weight[l_num] for weight in weights])
+
+    def stop_learning(self):
+        for layer in self.layers:
+            layer.stop_learning()
+
+    def start_learning(self):
+        for layer in self.layers:
+            layer.start_learning()
+
+    def save_attention_maps(self, folder):
+        attention_maps = [np.array(list(x.values())).reshape(28,56) for x in self.get_weights()[-1]]
+        for i, map in enumerate(attention_maps):
+            plt.imshow(map)
+            plt.savefig(f"{folder}/att_map_{Defaults.traces[i]}.png")
 
 
-def save_output_to_file(indicator, journals):
-    xdata, ydata = [], []
-    xdata = range(len(journals[0]))
-    for data in journals:
-        ydata.append([k for k in data])
-    ydata = [[ydata[j][i] for j in range(len(ydata))] for i in range(len(ydata[0]))]
-    plt.plot(xdata, ydata)
-    plt.savefig(str(indicator)+'.png')
-    plt.close()
+class Layer(SyncedObject):
+    """docstring for Layer"""
 
-if __name__ == "__main__":
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.neuron_number = kwargs['neuron_number']
+        except KeyError:
+            raise Exception("Необходимо указать число нейронов в параметре neuron_number!")
+        self.neurons = []
+        try:
+            self.layer_number = kwargs['layer_number']
+        except KeyError:
+            raise Exception("Необходимо указать номер слоя в параметре layer_number!")
 
-    input_layer = 28*28
-    output_layer = 8
-    number_of_categories = 8
+        if 'wta' in kwargs:
+            self.wta = kwargs['wta']
 
-    generation_num = 10
-    specimen_num = 5
-    traces_num = 200
+        self.output = []
 
+    def reset(self):
+        super().reset()
+
+    def hard_reset(self):
+        super().hard_reset()
+
+    def get_synapses(self):
+        return [
+            format(self.layer_number, '02x') +
+            format(n, '02x')
+            for n in range(len(self.neurons))
+        ]
+
+    def update(self, input_spikes):
+        neurons = self.neurons
+
+        if isinstance(input_spikes, int):
+            input_spikes = list([input_spikes])
+        output = [neuron.update(input_spikes) for neuron in random.sample(neurons, len(neurons))]
+
+        self.output = output
+
+    def get_input_journals(self):
+        return [neuron.get_input_journal() for neuron in self.neurons]
+
+    def get_output_journals(self):
+        return [neuron.get_output_journal() for neuron in self.neurons]
+
+    def get_weights(self):
+        return [neuron.weights for neuron in self.neurons]
+
+    def set_random_weights(self):
+        for neuron in self.neurons:
+            neuron.set_random_weights()
+
+    def set_weight(self, weights):
+        for neuron, weight in zip(self.neurons, weights):
+            neuron.weights = weight
+
+    def set_param_set(self, param_set):
+        for neuron in self.neurons:
+            neuron.set_param_set(param_set)
+
+    def mutate(self, *weights):
+        for n_num, neuron in enumerate(self.neurons):
+            neuron.mutate(*[weight[n_num] for weight in weights])
+
+    def rearrange_neurons(self, new_order):
+        new_neurons = [0] * len(new_order)
+        for neuron_num, trace_number in enumerate(new_order):
+            new_neurons[trace_number] = self.neurons[neuron_num]
+        self.neurons = new_neurons
+
+    def stop_learning(self):
+        for neuron in self.neurons:
+            neuron.learn = False
+
+    def start_learning(self):
+        for neuron in self.neurons:
+            neuron.learn = True
+
+
+class STDPLayer(Layer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        try:
+            self.neurons = [STDPNeuron(*args, **kwargs) for _ in range(self.neuron_number)]
+        except:
+            raise Exception("Недостаточно параметров для инициализации нейронов!")
+        if 'wta' in kwargs:
+            self.wta = kwargs['wta']
+        else:
+            self.wta = False
+
+    def update(self, input_spikes):
+        super().update(input_spikes)
+        output = self.output
+        neurons = self.neurons
+        wta = self.wta
+
+        for output, fired_neuron in zip(output, neurons):
+            if output:
+                for neuron in neurons:
+                    if neuron != fired_neuron:
+                        neuron.inhibit()
+                        if wta:
+                            neuron.reset_input()
+
+
+IS_FIRED = True
+NOT_FIRED = False
+
+
+class Neuron(SyncedObject):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.input_level = 0
+        self.output = 0
+
+        if 'weights' in kwargs:
+            self.weights = kwargs['weights']
+        else:
+            self.weights = {}
+
+        if 'learn' in kwargs:
+            self.learn = kwargs['learn']
+        else:
+            self.learn = False
+
+        try:
+            kwargs['logger'].add_watch(self)
+        except KeyError:
+            raise Exception("Невозможно инициализировать нейрон без логгера!")
+
+    def reset(self):
+        super().reset()
+        self.input_level = 0
+        self.output = 0
+
+    def hard_reset(self):
+        super().hard_reset()
+        self.reset()
+
+    def update(self, synapse:str):
+        pass
+
+    def set_weight(self, weight:list):
+        pass
+
+    def mutate(self, *weights:list):
+        pass
+
+
+
+class STDPNeuron(Neuron):
+    """Implementaion for a spike NN neuron"""
+
+    def __init__(self, *args, **kwargs):
+        """инициализация начальных параметров"""
+        super().__init__(*args, **kwargs)
+        try:
+            param_set = kwargs['param_set']
+        except KeyError:
+            param_set = Defaults.param_set
+
+        self.i_thres = param_set['i_thres']
+        self.t_ltp = param_set['t_ltp']
+        self.t_refrac = param_set['t_refrac']
+        self.t_inhibit = param_set['t_inhibit']
+        self.t_leak = param_set['t_leak']
+        self.w_min = param_set['w_min']
+        self.w_max = param_set['w_max']
+        self.a_dec = param_set['a_dec']
+        self.a_inc = param_set['a_inc']
+        # self.b_dec     = param_set.b_dec
+        # self.b_inc     = param_set.b_inc
+        self.randmut = param_set['randmut']
+
+        if 'activation_function' in kwargs:
+            self.activation_function = kwargs['activation_function']
+        else:
+            self.activation_function = ActivationFunctions.DeltaFunction(self.i_thres)
+
+        self.fired = False
+        self.refractory = False
+        self.ltp_synapses = {}  # записано, до какого момента при срабатывании синапс увеличит вес
+        self.t_spike = 0
+        self.t_last_spike = 0
+        self.inhibited_by = -1  # момент времени до начала симуляции
+        self.inhibited_on = -1
+
+    def reset(self):
+        super().reset()
+        self.t_spike = -1
+        self.t_last_spike = -1
+        self.inhibited_by = -1  # момент времени до начала симуляции
+        self.inhibited_on = -1
+        self.ltp_synapses = {}
+
+    def hard_reset(self):
+        super().hard_reset()
+        self.reset()
+
+    def update(self, synapses: list):
+        """обработать пришедшие данные и обновить состояние нейрона. Основная функция"""
+        if self.clock <= self.inhibited_by:
+            return
+        self.t_last_spike, self.t_spike = self.t_spike, self.clock
+        if self.t_last_spike != self.t_spike:
+            # если на этом моменте времени ещё не обрабатывали
+            self.output = 0
+
+        self.refractory = False
+        for synapse in synapses:
+            self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.t_leak)
+            self.input_level += self.weights[synapse]
+            self.ltp_synapses[synapse] = self.clock + self.t_ltp
+        self.output = self.activation_function(self.input_level)
+        if self.output:
+            self.input_level = 0
+            self.refractory = True
+            self.inhibited_by = self.t_spike + self.t_refrac
+            if self.learn:
+                for synapse, time in self.ltp_synapses.items():
+                    if time >= self.t_spike - self.t_ltp:
+                        self._synapse_inc_(synapse)
+                    else:
+                        self._synapse_dec_(synapse)
+                self.ltp_synapses = {}
+        return self.output
+
+    def mutate(self, *weights: list):
+        for synapse in self.weights:
+            if random.random() > self.randmut:
+                n = round((len(weights)-1)*random.random())
+                self.weights[synapse] = weights[n][synapse]
+            else:
+                self.weights[synapse] = random.randrange(self.w_min, self.w_max)
+            if self.weights[synapse] > self.w_max:
+                self.weights[synapse] = self.w_max
+            if self.weights[synapse] < self.w_min:
+                self.weights[synapse] = self.w_min
+
+    def _synapse_inc_(self, synapse: int):
+        """усилить связь с синапсами, сработавшими прямо перед срабатыванием нейрона"""
+        self.weights[synapse] += self.a_inc
+        if self.weights[synapse] > self.w_max:
+            self.weights[synapse] = self.w_max
+
+    def _synapse_dec_(self, synapse: int):
+        """ослабить связи с синапсами, не сработавшими перед срабатыванием нейрона"""
+        self.weights[synapse] -= self.a_dec
+        if self.weights[synapse] < self.w_min:
+            self.weights[synapse] = self.w_min
+
+    def inhibit(self):
+        # эта функция вызывается только из модели в случае срабатывания другого нейрона
+        # так как нейрон может быть неактивен, необходимо проверить сроки
+        if (self.inhibited_on < self.clock) or not self.refractory:  # не надо дважды ингибировать в один фрейм
+            self.inhibited_on = self.clock
+            self.inhibited_by = self.clock + self.t_inhibit
+        elif self.refractory and self.inhibited_by - self.t_refrac < self.inhibited_on:
+            # в случае когда нейрон уже находится
+            # в состоянии восстановления увеличиваем срок восстановления
+            # но проверяем, не добавили ли к этому нейрону уже время ингибиции.
+            # inhibited_by никогда не может превышать clock больше чем на сумму t_inhibit и t_refrac
+            self.inhibited_by += self.t_inhibit
+
+    def reset_input(self):
+        self.input_level = 0
+
+    def set_random_weights(self):
+        self.weights = {k: random.randrange(self.w_min, self.w_max) for k in self.weights}
+
+    def set_param_set(self, param_set):
+        self.i_thres = param_set['i_thres']
+        self.t_ltp = param_set['t_ltp']
+        self.t_refrac = param_set['t_refrac']
+        self.t_inhibit = param_set['t_inhibit']
+        self.t_leak = param_set['t_leak']
+        self.w_min = param_set['w_min']
+        self.w_max = param_set['w_max']
+        self.a_dec = param_set['a_dec']
+        self.a_inc = param_set['a_inc']
+        # self.b_dec     = param_set.b_dec
+        # self.b_inc     = param_set.b_inc
+        self.randmut = param_set['randmut']
+
+
+def init_model(**kwargs):
     timer = Timer(0)
-    feed_opts = {'mode': 'file', 'source': 'trace_up.bin'}
-    feed = CameraFeed(**feed_opts)
 
-    model = Network(t=timer, datafeed=feed, structure=(input_layer, output_layer), wta=True, learn=True)
-    best_scores = []
-    best_genoms = []
-    traces = []
-    folder = f"exp{int(time.time())}"
-    mkdir(folder)
+    feed_opts = {'timer': timer, 'mode': 'file', 'source': 'resources\\out.bin'}
+    feed_opts.update(kwargs)
+    feed = DataFeed(**feed_opts)
 
-    for i in range(generation_num):
-        # number of generations
-        genoms = []
-        scores = []
-        journals = []
-        print(f"=====generation {i}=====")
-        for j in range(specimen_num):
-            #number of specimen in generation
-            answers = [[], [], [], [], [], [], [], []]
-            traces = [random.choice(Defaults.files) for _ in range(traces_num)]
-            starttime = time.time()
-            model.mutate(*best_genoms)
-            tot = 0
-            timer.reset()
-            for n in range(traces_num):
-                #number of traces to train with
-                feed.load(traces[n])
-                model.cycle_through()
+    model_opts = {'timer': timer, 'datafeed': feed, 'learn': True,
+                  'param_set': pickle.load(open('optimal.param', 'rb'))['set'],
+                  'logger': Logger(timer = timer)}
+    model_opts.update(kwargs)
 
-                index_of_trace = Defaults.files.index(traces[n])
-                answers[index_of_trace].append([tot, model.frame])
-                tot += model.frame
+    model = SpikeNetwork(**model_opts)
 
-                model.reset()
+    if 'teacher' in kwargs:
+        model.logger.add_watch(model.teacher)
 
-            genoms.append(model.get_genom())
-            journals.append(model.get_journals_from_layer())
-
-            ans = np.zeros((number_of_categories, tot))
-
-            for i in range(ans.shape[0]):
-                #create matrix of answers
-                row = np.zeros(tot)
-                for entry in answers[i]:
-                    row += np.hstack((np.zeros(entry[0]),
-                                      np.ones(entry[1]),
-                                      np.zeros(tot-sum(entry))
-                                      ))
-                ans[i] = row
-
-            fitness = model.calculate_fitness(ans)
-            scores.append(fitness)
-            print(time.time() - starttime, fitness)
-
-        s_scores = list(reversed(sorted(scores)))
-        best_scores.append(s_scores[0])
-        index1 = scores.index(s_scores[0])
-        index2 = scores.index(s_scores[1])
-        best_genoms = (genoms[index1], genoms[index2])
-
-    plt.plot(list(range(len(best_scores))), best_scores)
-    plt.show()
-    plt.plot(list(range(len(best_scores))), best_scores)
-    plt.savefig(f"{folder}/graph.png")
-    pickle.dump(best_genoms[0], open(f"{folder}/f{s_scores[0]}.genom", "wb"))
+    return model, timer
