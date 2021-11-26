@@ -1,21 +1,3 @@
-def parse_aer(raw_data):
-    data = []
-    time = 0
-    if isinstance(raw_data, str):
-        raw_data = int(raw_data, base=16)
-    if isinstance(raw_data, int):
-        raw_data = [raw_data]
-    for entry in raw_data:
-        synapse = entry >> Defaults.time_bits
-        synapse = synapse << 3
-        synapse = format(synapse, '05x')
-        time = entry & Defaults.time_mask
-        # print(format(raw_data, "#040b"))
-        # print(synapse,
-        #    raw_data&defaults.time_mask)
-        data.append(synapse)
-    return data, time
-
 class Defaults(object):
     """docstring for defaults"""
     time_bits = 23

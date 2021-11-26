@@ -26,7 +26,7 @@ current_arrow = np.copy(white_square)
 frames = []
 frames_shown = 0
 
-for frame in model:
+while frame := model.next():
     if 1 in frame:
         frames_shown = 0
         current_arrow = arrows[frame.index(1)]

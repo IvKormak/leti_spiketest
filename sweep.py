@@ -1,4 +1,3 @@
-import pickle
 from os import mkdir
 import itertools
 
@@ -36,7 +35,7 @@ if __name__ == "__main__":
 
     generation_num = 3
     specimen_num = 5 #>=2
-    traces_num = 10
+    traces_num = 100
 
     param_static = {
         'i_thres': 5000,
@@ -61,7 +60,7 @@ if __name__ == "__main__":
     first_set = next(param_set_sweep)
     first_set.update(param_static)
 
-    model, timer = init_model(learn = True, teacher = Teacher(), structure = [number_of_categories,])
+    model, timer = init_model(learn = True, teacher = True, structure = [number_of_categories,])
 
     folder = f"exp{int(time.time())}"
     mkdir(folder)
@@ -83,22 +82,23 @@ if __name__ == "__main__":
             scores = []
             journals = []
             traces = []
-
-            #print(f"=====generation {i}=====")
             for j in range(specimen_num):
 
-                timer.hard_reset()
+                timer.reset()
 
-                    #number of specimen in generation
+                #number of specimen in generation
                 traces = [random.choice(Defaults.files) for _ in range(traces_num)]
                 model.mutate(*best_weights)
                 tot = 0
                 for trace in traces:
-                        #number of traces to train with
+                    #number of traces to train with
                     model.feed.load(trace)
-                    for o in model:
+                    while frame := model.next():
                         model.teacher.output = [1 if n == Defaults.files.index(trace) else 1j
-                                                for n in range(number_of_categories)]
+                                                      for n in range(number_of_categories)]
+                    """for frame in model:
+                        model.teacher.output = [1 if n == Defaults.files.index(trace) else 1j
+                                                for n in range(number_of_categories)]"""
                     tot += model.frame
 
                 weights.append(model.get_weights())
