@@ -26,7 +26,7 @@ class SyncedObject:
     def clock(self):
         return Timer.clock
 
-class Logger(SyncedObject):
+class Logger:
     """Класс логгера. Он должен инициализироваться до сети!"""
     def __init__(self, *args, **kwargs):
         super(Logger, self).__init__(*args, **kwargs)
@@ -49,7 +49,7 @@ class Logger(SyncedObject):
 
     def collect_watches(self):
         if any([getattr(watch, attr) if blocking else False for watch, attr, blocking in self.watches]):
-            self.logs['timestamps'].append(self.clock)
+            self.logs['timestamps'].append(Timer.clock)
             for watch, attr, blocking in self.watches:
                 self.logs[watch].append(getattr(watch, attr))
 
@@ -66,7 +66,7 @@ class Logger(SyncedObject):
         self.collect_watches()
         super(Logger, self).update_clock(time)
 
-class SpikeNetwork(SyncedObject):
+class SpikeNetwork:
     """docstring for Network"""
 
     def __init__(self, *args, **kwargs):
@@ -209,7 +209,7 @@ class SpikeNetwork(SyncedObject):
             plt.savefig(f"{folder}/att_map_{Defaults.traces[i]}.png")
 
 
-class Layer(SyncedObject):
+class Layer:
     """docstring for Layer"""
 
     def __init__(self, *args, **kwargs):
@@ -290,7 +290,7 @@ class STDPLayer(Layer):
                         if wta:
                             neuron.input_level = 0
 
-class Synapse(SyncedObject):
+class Synapse:
     def __init__(self, weight=0, param_set):
         self._weight = weight
         self.param_set = param_set
@@ -298,11 +298,11 @@ class Synapse(SyncedObject):
        
     @property
     def weight(self):
-        self.last_spike = self.clock
+        self.last_spike = Timer.clock
         return self._weight
     
     def ltp(self):
-        if self.last_spike + self.param_set['t_ltp'] >= self.clock:
+        if self.last_spike + self.param_set['t_ltp'] >= Timer.clock:
             self._inc()
         else:
             self._dec()
@@ -318,7 +318,7 @@ class Synapse(SyncedObject):
             self._weight = self.param_set['w_min']
                             
                             
-class Neuron(SyncedObject):
+class Neuron:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -401,12 +401,12 @@ class STDPNeuron(Neuron):
     def update(self, *synapses):
         """обработать пришедшие данные и обновить состояние нейрона. Основная функция"""
         super().update(*synapses)
-        if self.clock <= self.inhibited_by:
+        if Timer.clock <= self.inhibited_by:
             return 0
         self.output_level = 0
         self.refractory = False
         for synapse in synapses[0]:
-            self.t_last_spike, self.t_spike = self.t_spike, self.clock
+            self.t_last_spike, self.t_spike = self.t_spike, Timer.clock
             self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.param_set['t_leak'])
             self.input_level += self.weights[synapse].weight
         self.output_level = self.activation_function(self.input_level)
@@ -423,9 +423,9 @@ class STDPNeuron(Neuron):
     def inhibit(self):
         # эта функция вызывается только из модели в случае срабатывания другого нейрона
         # так как нейрон может быть неактивен, необходимо проверить сроки
-        if (self.inhibited_on < self.clock) or not self.refractory:  # не надо дважды ингибировать в один фрейм
-            self.inhibited_on = self.clock
-            self.inhibited_by = self.clock + self.param_set['t_inhibit']
+        if (self.inhibited_on < Timer.clock) or not self.refractory:  # не надо дважды ингибировать в один фрейм
+            self.inhibited_on = Timer.clock
+            self.inhibited_by = Timer.clock + self.param_set['t_inhibit']
         elif self.refractory and self.inhibited_by - self.param_set['t_refrac'] < self.inhibited_on:
             # в случае когда нейрон уже находится
             # в состоянии восстановления увеличиваем срок восстановления
