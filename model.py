@@ -6,6 +6,12 @@ import random
 import time
 import pickle
 
+#
+#TODO: Переписать Neuron, Layer как асбтрактные классы с @abstract
+#Избавиться от SyncedObject
+#
+#
+
 class Timer:
     clock = 0
     listeners = []
@@ -413,18 +419,6 @@ class STDPNeuron(Neuron):
                     s.ltp()
                     s.last_spike = -1
         return self.output_level
-
-    def _synapse_inc_(self, synapse: int):
-        """усилить связь с синапсами, сработавшими прямо перед срабатыванием нейрона"""
-        self.weights[synapse] += self.param_set['a_inc']
-        if self.weights[synapse] > self.param_set['w_max']:
-            self.weights[synapse] = self.param_set['w_max']
-
-    def _synapse_dec_(self, synapse: int):
-        """ослабить связи с синапсами, не сработавшими перед срабатыванием нейрона"""
-        self.weights[synapse] -= self.param_set['a_dec']
-        if self.weights[synapse] < self.param_set['w_min']:
-            self.weights[synapse] = self.param_set['w_min']
 
     def inhibit(self):
         # эта функция вызывается только из модели в случае срабатывания другого нейрона
