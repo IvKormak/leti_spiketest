@@ -6,57 +6,27 @@ import random
 import time
 import pickle
 
-class Timer(object):
-    """docstring for Timer"""
+#
+#TODO: Переписать Neuron, Layer как асбтрактные классы с @abstract
+#Избавиться от SyncedObject
+#
+#
 
-    def __init__(self, time=0):
-        super(Timer, self).__init__()
-        self.clock = time
-        self.listeners = []
-
-    def set_time(self, time):
-        self.clock = time
-        self.announce()
-
-    def reset(self):
-        self.set_time(0)
-        for listener in self.listeners:
-            listener.reset()
-
-    def add_listener(self, listener):
-        if not hasattr(listener, 'update_clock'):
-            raise AttributeError(f"У слушателя должен быть метод update_clock: {listener}")
-        self.listeners.append(listener)
-
-    def remove_listener(self, listener):
-        try:
-            self.listeners.remove(listener)
-        except ValueError as e:
-            raise ValueError(f"Этот объект не зарегистрирован в качестве слушателя: {listener}")
-
-    def announce(self):
-        for listener in self.listeners:
-            listener.update_clock(self.clock)
+class Timer:
+    clock = 0
+    listeners = []
 
 class Teacher:
     def __init__(self):
         self.output = None
 
-class SyncedObject(object):
-    def __init__(self, *args, **kwargs):
-        self.clock = 0
-        try:
-            kwargs['timer'].add_listener(self)
-        except KeyError:
-            raise Exception(f"Невозможно инициализировать объект без таймера!: {self}")
+class SyncedObject:
+        
+    @property
+    def clock(self):
+        return Timer.clock
 
-    def update_clock(self, time:int):
-        self.clock = time
-
-    def reset(self):
-        self.clock = 0
-
-class Logger(SyncedObject):
+class Logger:
     """Класс логгера. Он должен инициализироваться до сети!"""
     def __init__(self, *args, **kwargs):
         super(Logger, self).__init__(*args, **kwargs)
@@ -79,7 +49,7 @@ class Logger(SyncedObject):
 
     def collect_watches(self):
         if any([getattr(watch, attr) if blocking else False for watch, attr, blocking in self.watches]):
-            self.logs['timestamps'].append(self.clock)
+            self.logs['timestamps'].append(Timer.clock)
             for watch, attr, blocking in self.watches:
                 self.logs[watch].append(getattr(watch, attr))
 
@@ -96,7 +66,7 @@ class Logger(SyncedObject):
         self.collect_watches()
         super(Logger, self).update_clock(time)
 
-class SpikeNetwork(SyncedObject):
+class SpikeNetwork:
     """docstring for Network"""
 
     def __init__(self, *args, **kwargs):
@@ -118,6 +88,7 @@ class SpikeNetwork(SyncedObject):
             if kwargs['learn']:
                 try:
                     self.teacher = Teacher()
+                    self.logger.add_watch(self.teacher)
                 except KeyError:
                     raise Exception("Невозможно инициализировать сеть без учителя!")
 
@@ -146,9 +117,6 @@ class SpikeNetwork(SyncedObject):
 
     def set_feed(self, datafeed: DataFeed):
         self.feed = datafeed
-
-    def __iter__(self):
-        return self
 
     def next(self):
         # читаем следующий сигнал с камеры
@@ -241,7 +209,7 @@ class SpikeNetwork(SyncedObject):
             plt.savefig(f"{folder}/att_map_{Defaults.traces[i]}.png")
 
 
-class Layer(SyncedObject):
+class Layer:
     """docstring for Layer"""
 
     def __init__(self, *args, **kwargs):
@@ -322,8 +290,35 @@ class STDPLayer(Layer):
                         if wta:
                             neuron.input_level = 0
 
-
-class Neuron(SyncedObject):
+class Synapse:
+    def __init__(self, weight=0, param_set):
+        self._weight = weight
+        self.param_set = param_set
+        self.last_spike = -1
+       
+    @property
+    def weight(self):
+        self.last_spike = Timer.clock
+        return self._weight
+    
+    def ltp(self):
+        if self.last_spike + self.param_set['t_ltp'] >= Timer.clock:
+            self._inc()
+        else:
+            self._dec()
+    
+    def _inc(self):
+        self._weight += self.param_set['a_inc'] 
+        if self._weight > self.param_set['w_max']:
+            self._weight = self.param_set['w_max']
+            
+    def _dec(self):
+        self._weight -= self.param_set['a_dec'] 
+        if self._weight < self.param_set['w_min']:
+            self._weight = self.param_set['w_min']
+                            
+                            
+class Neuron:
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -336,7 +331,7 @@ class Neuron(SyncedObject):
             self.param_set = Defaults.param_set
 
         if 'weights' in kwargs:
-            self.weights = kwargs['weights']
+            self.weights = {k: Synapse(val, self.param_set) for k, val in kwargs['weights']}
         else:
             self.weights = {}
 
@@ -406,47 +401,31 @@ class STDPNeuron(Neuron):
     def update(self, *synapses):
         """обработать пришедшие данные и обновить состояние нейрона. Основная функция"""
         super().update(*synapses)
-        if self.clock <= self.inhibited_by:
+        if Timer.clock <= self.inhibited_by:
             return 0
         self.output_level = 0
         self.refractory = False
         for synapse in synapses[0]:
-            self.t_last_spike, self.t_spike = self.t_spike, self.clock
+            self.t_last_spike, self.t_spike = self.t_spike, Timer.clock
             self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.param_set['t_leak'])
-            self.input_level += self.weights[synapse]
-            self.ltp_synapses[synapse] = self.clock + self.param_set['t_ltp']
+            self.input_level += self.weights[synapse].weight
         self.output_level = self.activation_function(self.input_level)
         if self.output_level:
             self.input_level = 0
             self.refractory = True
             self.inhibited_by = self.t_spike + self.param_set['t_refrac']
             if self.learn:
-                for synapse, time in self.ltp_synapses.items():
-                    if time >= self.t_spike - self.param_set['t_ltp']:
-                        self._synapse_inc_(synapse)
-                    else:
-                        self._synapse_dec_(synapse)
-                self.ltp_synapses = {}
+                for s in self.weights.values():
+                    s.ltp()
+                    s.last_spike = -1
         return self.output_level
-
-    def _synapse_inc_(self, synapse: int):
-        """усилить связь с синапсами, сработавшими прямо перед срабатыванием нейрона"""
-        self.weights[synapse] += self.param_set['a_inc']
-        if self.weights[synapse] > self.param_set['w_max']:
-            self.weights[synapse] = self.param_set['w_max']
-
-    def _synapse_dec_(self, synapse: int):
-        """ослабить связи с синапсами, не сработавшими перед срабатыванием нейрона"""
-        self.weights[synapse] -= self.param_set['a_dec']
-        if self.weights[synapse] < self.param_set['w_min']:
-            self.weights[synapse] = self.param_set['w_min']
 
     def inhibit(self):
         # эта функция вызывается только из модели в случае срабатывания другого нейрона
         # так как нейрон может быть неактивен, необходимо проверить сроки
-        if (self.inhibited_on < self.clock) or not self.refractory:  # не надо дважды ингибировать в один фрейм
-            self.inhibited_on = self.clock
-            self.inhibited_by = self.clock + self.param_set['t_inhibit']
+        if (self.inhibited_on < Timer.clock) or not self.refractory:  # не надо дважды ингибировать в один фрейм
+            self.inhibited_on = Timer.clock
+            self.inhibited_by = Timer.clock + self.param_set['t_inhibit']
         elif self.refractory and self.inhibited_by - self.param_set['t_refrac'] < self.inhibited_on:
             # в случае когда нейрон уже находится
             # в состоянии восстановления увеличиваем срок восстановления
@@ -456,13 +435,11 @@ class STDPNeuron(Neuron):
 
 
 def init_model(**kwargs):
-    timer = Timer(0)
-
-    feed_opts = {'timer': timer, 'mode': 'file', 'source': 'resources\\out.bin'}
+    feed_opts = {'mode': 'file', 'source': 'resources\\out.bin'}
     feed_opts.update(kwargs)
     feed = DataFeed(**feed_opts)
 
-    model_opts = {'timer': timer, 'datafeed': feed, 'learn': True,
+    model_opts = {timer, 'datafeed': feed, 'learn': True,
                   'param_set': pickle.load(open('optimal.param', 'rb'))['set'],
                   'logger': Logger(timer = timer)}
     model_opts.update(kwargs)
@@ -472,4 +449,4 @@ def init_model(**kwargs):
     if 'teacher' in kwargs:
         model.logger.add_watch(model.teacher)
 
-    return model, timer
+    return model

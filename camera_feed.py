@@ -2,10 +2,6 @@ from utility import *
 
 class DataFeed:
     def __init__(self, *args, **kwargs):
-        try:
-            self.timer = kwargs['timer']
-        except KeyError:
-            raise Exception("Необходимо предоставить объект таймера!")
         self.data = ""
 
         self.cache = {}
@@ -32,7 +28,7 @@ class DataFeed:
         else:
             self.data = self.cache[source]
 
-        self.timer.reset()
+        Timer.clock = 0
 
     def get_pixels(self):
         return self.pixels
@@ -46,7 +42,7 @@ class DataFeed:
             raise StopIteration
         self.index += 1
         time = self.parse_aer(entry)[1]
-        self.timer.set_time(time)
+        Timer.clock = time
         return entry
 
     def __iter__(self):
