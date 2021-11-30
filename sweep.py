@@ -60,7 +60,7 @@ if __name__ == "__main__":
     first_set = next(param_set_sweep)
     first_set.update(param_static)
 
-    model, timer = init_model(learn = True, teacher = True, structure = [number_of_categories,])
+    model = init_model(learn = True, teacher = True, structure = [number_of_categories,])
 
     folder = f"exp{int(time.time())}"
     mkdir(folder)

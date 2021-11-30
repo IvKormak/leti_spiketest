@@ -5,31 +5,83 @@ import numpy as np
 import random
 import time
 import pickle
+from utility import *
 
-#
-#TODO: Переписать Neuron, Layer как асбтрактные классы с @abstract
-#Избавиться от SyncedObject
-#
-#
+Timer = 0
 
-class Timer:
-    clock = 0
-    listeners = []
+class DataFeed:
+    def __init__(self, *args, **kwargs):
+        self.data = ""
+
+        self.cache = {}
+
+        self.pixels = Defaults.pixels
+
+        if 'source' in kwargs:
+            self.load(kwargs['source'])
+        if 'start' in kwargs:
+            self.index = kwargs['start']
+        else:
+            self.index = 0
+
+    def load(self, source:str):
+        self.index = 0
+        if source not in self.cache:
+            file = open(source, 'r')
+            self.data = ""
+            hexadecimals = "0123456789abcdef"
+            while char := file.read(1):
+                if char in hexadecimals:
+                    self.data += char
+            self.cache[source] = self.data
+        else:
+            self.data = self.cache[source]
+        Timer = 0
+
+    def get_pixels(self):
+        return self.pixels
+
+    def __next__(self):
+        try:
+            entry = self.data[10*self.index:10*(self.index+1)]
+        except IndexError:
+            raise StopIteration
+        if len(entry) == 0:
+            raise StopIteration
+        self.index += 1
+        Timer = self.parse_aer(entry)[1]
+        return entry
+
+    def __iter__(self):
+        self.index = 0
+        return self
+
+    def parse_aer(self, raw_data):
+        data = []
+        time = 0
+        if isinstance(raw_data, str):
+            raw_data = int(raw_data, base=16)
+        if isinstance(raw_data, int):
+            raw_data = [raw_data]
+        for entry in raw_data:
+            synapse = entry >> Defaults.time_bits
+            synapse = synapse << 3
+            synapse = format(synapse, '05x')
+            time = entry & Defaults.time_mask
+            # print(format(raw_data, "#040b"))
+            # print(synapse,
+            #    raw_data&defaults.time_mask)
+            data.append(synapse)
+        return data, time
+    
 
 class Teacher:
     def __init__(self):
         self.output = None
 
-class SyncedObject:
-        
-    @property
-    def clock(self):
-        return Timer.clock
-
 class Logger:
     """Класс логгера. Он должен инициализироваться до сети!"""
     def __init__(self, *args, **kwargs):
-        super(Logger, self).__init__(*args, **kwargs)
         self.watches = []
         self.logs = {'timestamps': []}
 
@@ -49,7 +101,7 @@ class Logger:
 
     def collect_watches(self):
         if any([getattr(watch, attr) if blocking else False for watch, attr, blocking in self.watches]):
-            self.logs['timestamps'].append(Timer.clock)
+            self.logs['timestamps'].append(Timer)
             for watch, attr, blocking in self.watches:
                 self.logs[watch].append(getattr(watch, attr))
 
@@ -70,7 +122,6 @@ class SpikeNetwork:
     """docstring for Network"""
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         self.layers = []
         self.frame = 0
 
@@ -88,7 +139,6 @@ class SpikeNetwork:
             if kwargs['learn']:
                 try:
                     self.teacher = Teacher()
-                    self.logger.add_watch(self.teacher)
                 except KeyError:
                     raise Exception("Невозможно инициализировать сеть без учителя!")
 
@@ -117,6 +167,9 @@ class SpikeNetwork:
 
     def set_feed(self, datafeed: DataFeed):
         self.feed = datafeed
+
+    def __iter__(self):
+        return self
 
     def next(self):
         # читаем следующий сигнал с камеры
@@ -213,7 +266,6 @@ class Layer:
     """docstring for Layer"""
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
         try:
             self.neuron_count = kwargs['neuron_count']
         except KeyError:
@@ -290,37 +342,9 @@ class STDPLayer(Layer):
                         if wta:
                             neuron.input_level = 0
 
-class Synapse:
-    def __init__(self, weight=0, param_set):
-        self._weight = weight
-        self.param_set = param_set
-        self.last_spike = -1
-       
-    @property
-    def weight(self):
-        self.last_spike = Timer.clock
-        return self._weight
-    
-    def ltp(self):
-        if self.last_spike + self.param_set['t_ltp'] >= Timer.clock:
-            self._inc()
-        else:
-            self._dec()
-    
-    def _inc(self):
-        self._weight += self.param_set['a_inc'] 
-        if self._weight > self.param_set['w_max']:
-            self._weight = self.param_set['w_max']
-            
-    def _dec(self):
-        self._weight -= self.param_set['a_dec'] 
-        if self._weight < self.param_set['w_min']:
-            self._weight = self.param_set['w_min']
-                            
-                            
+
 class Neuron:
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
         self.input_level = 0
         self.output_level = 0
@@ -331,7 +355,7 @@ class Neuron:
             self.param_set = Defaults.param_set
 
         if 'weights' in kwargs:
-            self.weights = {k: Synapse(val, self.param_set) for k, val in kwargs['weights']}
+            self.weights = kwargs['weights']
         else:
             self.weights = {}
 
@@ -401,31 +425,47 @@ class STDPNeuron(Neuron):
     def update(self, *synapses):
         """обработать пришедшие данные и обновить состояние нейрона. Основная функция"""
         super().update(*synapses)
-        if Timer.clock <= self.inhibited_by:
+        if Timer <= self.inhibited_by:
             return 0
         self.output_level = 0
         self.refractory = False
         for synapse in synapses[0]:
-            self.t_last_spike, self.t_spike = self.t_spike, Timer.clock
+            self.t_last_spike, self.t_spike = self.t_spike, Timer
             self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.param_set['t_leak'])
-            self.input_level += self.weights[synapse].weight
+            self.input_level += self.weights[synapse]
+            self.ltp_synapses[synapse] = Timer + self.param_set['t_ltp']
         self.output_level = self.activation_function(self.input_level)
         if self.output_level:
             self.input_level = 0
             self.refractory = True
             self.inhibited_by = self.t_spike + self.param_set['t_refrac']
             if self.learn:
-                for s in self.weights.values():
-                    s.ltp()
-                    s.last_spike = -1
+                for synapse, time in self.ltp_synapses.items():
+                    if time >= self.t_spike - self.param_set['t_ltp']:
+                        self._synapse_inc_(synapse)
+                    else:
+                        self._synapse_dec_(synapse)
+                self.ltp_synapses = {}
         return self.output_level
+
+    def _synapse_inc_(self, synapse: int):
+        """усилить связь с синапсами, сработавшими прямо перед срабатыванием нейрона"""
+        self.weights[synapse] += self.param_set['a_inc']
+        if self.weights[synapse] > self.param_set['w_max']:
+            self.weights[synapse] = self.param_set['w_max']
+
+    def _synapse_dec_(self, synapse: int):
+        """ослабить связи с синапсами, не сработавшими перед срабатыванием нейрона"""
+        self.weights[synapse] -= self.param_set['a_dec']
+        if self.weights[synapse] < self.param_set['w_min']:
+            self.weights[synapse] = self.param_set['w_min']
 
     def inhibit(self):
         # эта функция вызывается только из модели в случае срабатывания другого нейрона
         # так как нейрон может быть неактивен, необходимо проверить сроки
-        if (self.inhibited_on < Timer.clock) or not self.refractory:  # не надо дважды ингибировать в один фрейм
-            self.inhibited_on = Timer.clock
-            self.inhibited_by = Timer.clock + self.param_set['t_inhibit']
+        if (self.inhibited_on < Timer) or not self.refractory:  # не надо дважды ингибировать в один фрейм
+            self.inhibited_on = Timer
+            self.inhibited_by = Timer + self.param_set['t_inhibit']
         elif self.refractory and self.inhibited_by - self.param_set['t_refrac'] < self.inhibited_on:
             # в случае когда нейрон уже находится
             # в состоянии восстановления увеличиваем срок восстановления
@@ -439,9 +479,9 @@ def init_model(**kwargs):
     feed_opts.update(kwargs)
     feed = DataFeed(**feed_opts)
 
-    model_opts = {timer, 'datafeed': feed, 'learn': True,
+    model_opts = {'datafeed': feed, 'learn': True,
                   'param_set': pickle.load(open('optimal.param', 'rb'))['set'],
-                  'logger': Logger(timer = timer)}
+                  'logger': Logger()}
     model_opts.update(kwargs)
 
     model = SpikeNetwork(**model_opts)

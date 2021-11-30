@@ -6,14 +6,14 @@ import pickle
 from os import mkdir
 
 
-f = "C:\\Users\\Кормак\\PycharmProjects\\leti_spiketest\\exp1637728982"
+f = "C:\\Users\\Кормак\\PycharmProjects\\leti_spiketest\\exp1637673093"
 g = "f.weight"
 
 rotation = [[0, 180, 270, 90], [270, 0, 180, 90]]
 
 arrows = pickle.load(open('resources\\arrows.bin', 'rb'))
 
-model, timer = init_model(learn = False, structure=[7,])
+model = init_model(learn = False, structure=[7,])
 
 folder = f"exp{int(time.time())}"
 mkdir(folder)
@@ -27,7 +27,8 @@ frames = []
 frames_shown = 0
 
 while frame := model.next():
-    if 1 in frame:
+    pass
+    """if 1 in frame:
         frames_shown = 0
         current_arrow = arrows[frame.index(1)]
     if frames_shown > 50:
@@ -41,4 +42,4 @@ while frame := model.next():
     frames.append(np.concatenate((current_frame, current_arrow)).astype(np.uint8))
     frames_shown += 1
 
-iio.mimwrite('animation2.gif', frames, fps=60)
+iio.mimwrite('animation2.gif', frames, fps=60)"""
