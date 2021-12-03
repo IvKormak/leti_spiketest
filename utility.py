@@ -5,15 +5,15 @@ class Defaults(object):
     data_bits = 40
 
     param_set = {
-        'i_thres': 10000,
-        't_ltp': 0.8 * 10 ** 3,
-        't_refrac': 4 * 10 ** 3,
-        't_inhibit': 10 * 10 ** 2,
-        't_leak': 6 * 10 ** 3,
+        'i_thres': 40000,
+        't_ltp': 2 * 10 ** 3,
+        't_refrac': 10 * 10 ** 3,
+        't_inhibit': 15 * 10 ** 2,
+        't_leak': 5 * 10 ** 3,
         'w_min': 1,
         'w_max': 1000,
         'a_dec': 50,
-        'a_inc': 200,
+        'a_inc': 100,
         'randmut': 0.001
     }
 
