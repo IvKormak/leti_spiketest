@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Union, Tuple, Dict, List, Type, Any
 import matplotlib.pyplot as plt
 import numpy as np
 import random
@@ -12,7 +13,7 @@ class Timer:
     __instance = None
 
     @staticmethod
-    def get_instance():
+    def get_instance() -> 'Timer':
         """ Static access method. """
         if Timer.__instance is None:
             Timer()
@@ -42,7 +43,7 @@ class ParameterSet:
 
 
 class DataFeed:
-    def __init__(self, timer, source=False):
+    def __init__(self, timer: Timer, source=False):
         self.data = ""
         self.timer = timer
         self.cache = {}
@@ -68,10 +69,10 @@ class DataFeed:
             self.data = self.cache[source]
         self.timer.clock = 0
 
-    def get_pixels(self):
+    def get_pixels(self) -> List[str]:
         return self.pixels
 
-    def __next__(self):
+    def __next__(self) -> str:
         try:
             entry = self.data[10 * self.index:10 * (self.index + 1)]
         except IndexError:
@@ -82,12 +83,12 @@ class DataFeed:
         self.timer.clock = self.parse_aer(entry)[1]
         return entry
 
-    def __iter__(self):
+    def __iter__(self) -> 'DataFeed':
         self.index = 0
         return self
 
     @staticmethod
-    def parse_aer(raw_data):
+    def parse_aer(raw_data: str) -> Tuple[str, int]:
         data = []
         time = 0
         if isinstance(raw_data, str):
@@ -114,21 +115,21 @@ class Teacher:
 class Logger:
     """Класс логгера"""
 
-    def __init__(self, timer):
+    def __init__(self, timer: Timer):
         self.timer = timer
         self.watches = []
         self.logs = {'timestamps': []}
 
-    def add_watch(self, watch, attr='output'):
+    def add_watch(self, watch: Type[Any], attr: str = 'output'):
         if not hasattr(watch, attr):
             raise AttributeError(f"За объектом нельзя следить, нет свойства {attr}: {watch}")
         self.watches.append((watch, attr))
-        self.logs[watch] = []
+        self.logs[(watch, attr)] = []
 
-    def remove_watch(self, watch):
+    def remove_watch(self, watch: Type[Any], attr: str = 'output'):
         try:
             for w, a in self.watches:
-                if watch == w:
+                if (watch, attr) == (w, a):
                     self.watches.remove((w, a))
         except ValueError:
             raise ValueError(f"За этим объектом не происходит слежения: {watch}")
@@ -136,24 +137,89 @@ class Logger:
     def collect_watches(self):
         self.logs['timestamps'].append(self.timer.clock)
         for watch, attr in self.watches:
-            self.logs[watch].append(getattr(watch, attr))
+            self.logs[(watch, attr)].append(getattr(watch, attr))
 
-    def get_logs(self, watch):
+    def get_logs(self, watch: Type[Any], attr: str = 'output') -> List[Any]:
         try:
-            return self.logs[watch]
+            return self.logs[(watch, attr)]
         except KeyError:
-            raise KeyError(f"За этим объектом не происходит слежения: {watch}")
+            raise KeyError(f"За этим объектом не происходит слежения: {(watch, attr)}")
 
     def reset(self):
         self.logs = {k: [] for k in self.logs}
 
 
+class Layer(ABC):
+    """docstring for Layer"""
+    @abstractmethod
+    def reset(self):
+        pass
+
+    @abstractmethod
+    def get_synapses(self):
+        pass
+
+    @abstractmethod
+    def update(self, *input_spikes: List[str]):
+        pass
+
+    @abstractmethod
+    def get_weights(self):
+        pass
+
+    @abstractmethod
+    def set_random_weights(self):
+        pass
+
+    @abstractmethod
+    def set_weight(self, weights: Dict[str, int]):
+        pass
+
+    @abstractmethod
+    def set_param_set(self, param_set: ParameterSet):
+        pass
+
+    @abstractmethod
+    def mutate(self, *weights: Tuple[Dict[str, int]]):
+        pass
+
+    @abstractmethod
+    def rearrange_neurons(self, new_order: List[int]):
+        pass
+
+
+class Neuron(ABC):
+    @abstractmethod
+    def reset(self):
+        pass
+
+    @abstractmethod
+    def update(self, *synapses: List[str]):
+        pass
+
+    @abstractmethod
+    def mutate(self, *weights: Tuple[Dict[str, int]]):
+        pass
+
+    @abstractmethod
+    def set_random_weights(self):
+        pass
+
+    @abstractmethod
+    def set_param_set(self, param_set: ParameterSet):
+        pass
+
+    @abstractmethod
+    def inhibit(self):
+        pass
+
+
 class SpikeNetwork:
 
-    def __init__(self, datafeed, structure, parameter_set=False, learn=False, **layer_args):
+    def __init__(self, datafeed: DataFeed, structure: Tuple[Tuple[int]], parameter_set: Dict = {}, learn: bool = False, **layer_args):
         self.layers = []
         self.frame = 0
-        if parameter_set:
+        if parameter_set != {}:
             self.param_set = ParameterSet(**parameter_set)
         else:
             self.param_set = ParameterSet(**Defaults.param_set)
@@ -170,10 +236,10 @@ class SpikeNetwork:
 
         try:
             synapses = self.feed.get_pixels()
-            for layer_num, neuron_num in enumerate(structure):
+            for layer_num, shape in enumerate(structure):
                 layer = STDPLayer(
                     timer=self.timer,
-                    neuron_count=neuron_num,
+                    shape=shape,
                     layer_number=layer_num + 1,
                     synapses=synapses,
                     parameter_set=self.param_set,
@@ -186,22 +252,21 @@ class SpikeNetwork:
         except KeyError:
             raise Exception("Невозможно инициализировать сеть не указав структуру!")
 
-    def set_param_set(self, param_set):
+    def set_param_set(self, param_set: Dict):
         self.param_set = ParameterSet(**param_set)
         for layer in self.layers:
             layer.set_param_set(self.param_set)
 
     def reset(self):
-        super().reset()
         self.frame = 0
+        self.logger.reset()
+        for layer in self.layers:
+            layer.reset()
 
     def set_feed(self, datafeed: DataFeed):
         self.feed = datafeed
 
-    def __iter__(self):
-        return self
-
-    def next(self):
+    def next(self) -> List[int]:
         # читаем следующий сигнал с камеры
         try:
             self.raw_data = next(self.feed)
@@ -219,18 +284,18 @@ class SpikeNetwork:
         self.logger.collect_watches()
         return input_data
 
-    def get_journals_from_layer(self, layer=-1):
+    def get_journals_from_layer(self, layer: int = -1) -> List[List[int]]:
         # выдаем журналы событий с узанного слоя
         # по умолчанию - выходной
         journals = []
         for neuron in self.layers[layer].neurons:
-            journals.append(self.logger.get_logs(neuron))
+            journals.append(self.logger.get_logs(neuron, 'output_level'))
         return journals
 
-    def calculate_fitness(self):
+    def calculate_fitness(self) -> Tuple:
         # считаем фитнесс функцию от числа правильных и неправильных ответов
         neuron_journals = self.get_journals_from_layer()
-        teacher_journal = self.logger.get_logs(self.teacher)
+        teacher_journal = self.logger.get_logs(self.teacher, 'output')
         R = [[] for _ in neuron_journals]
         C = []
         for f, ans in enumerate(teacher_journal):
@@ -244,9 +309,11 @@ class SpikeNetwork:
         trace_numbers = list(range(C.shape[1]))
         neuron_numbers = list(range(R.shape[0]))
         random.shuffle(neuron_numbers)
-        preferred_order = [0 for _ in neuron_numbers]
+        preferred_order = neuron_numbers.copy()
         for neuron_number in neuron_numbers:
             maximum_score_for_trace = 0
+            if len(trace_numbers) == 0:
+                break
             trace_best_guessed = trace_numbers[0]
             for trace_number in trace_numbers:
                 if np.real(F[neuron_number][trace_number]) > maximum_score_for_trace:
@@ -254,7 +321,8 @@ class SpikeNetwork:
                     trace_best_guessed = trace_number
             score += maximum_score_for_trace
             trace_numbers.remove(trace_best_guessed)
-            preferred_order[neuron_number] = trace_best_guessed
+            preferred_order.remove(trace_best_guessed)
+            preferred_order.insert(neuron_number, trace_best_guessed)
         # установим выходные нейроны в таком порядке чтобы
         # порядковый номер нейрона соответствовал порядковому
         # номеру направления, которое он определяет лучше всего
@@ -265,18 +333,18 @@ class SpikeNetwork:
         score = (right_ans / (total_ans + 1) - 1 / C.shape[1]) * right_ans
         return score, right_ans, total_ans, f"{right_ans / (total_ans + 1) * 100}%"
 
-    def get_weights(self):
+    def get_weights(self) -> List[List[Dict[str, int]]]:
         return [layer.get_weights() for layer in self.layers]
 
     def set_random_weights(self):
         for layer in self.layers:
             layer.set_random_weights()
 
-    def set_weights(self, weights: list):
+    def set_weights(self, weights: List[List[Dict[str, int]]]):
         for l_num, layer in enumerate(self.layers):
             layer.set_weight(weights[l_num])
 
-    def mutate(self, *weights):
+    def mutate(self, *weights: Tuple[Dict[str, int]]):
         if len(weights) == 0:
             self.set_random_weights()
         else:
@@ -285,7 +353,7 @@ class SpikeNetwork:
                 # кусок соответствующий нужному нам слою
                 layer.mutate(*[weight[l_num] for weight in weights])
 
-    def save_attention_maps(self, folder):
+    def save_attention_maps(self, folder: str):
         attention_maps = []
         pixels_on = Defaults.pixels[1::2]
         pixels_off = Defaults.pixels[::2]
@@ -299,92 +367,42 @@ class SpikeNetwork:
             plt.savefig(f"{folder}/att_map_{Defaults.traces[i//2]}{i%2}.png")
 
 
-class Layer(ABC):
-    """docstring for Layer"""
-
-    @abstractmethod
-    def get_synapses(self):
-        pass
-
-    @abstractmethod
-    def update(self, *input_spikes):
-        pass
-
-    @abstractmethod
-    def get_weights(self):
-        pass
-
-    @abstractmethod
-    def set_random_weights(self):
-        pass
-
-    @abstractmethod
-    def set_weight(self, weights):
-        pass
-
-    @abstractmethod
-    def set_param_set(self, param_set):
-        pass
-
-    @abstractmethod
-    def mutate(self, *weights):
-        pass
-
-    @abstractmethod
-    def rearrange_neurons(self, new_order):
-        pass
-
-
-class Neuron(ABC):
-    @abstractmethod
-    def reset(self):
-        pass
-
-    @abstractmethod
-    def update(self, *synapses):
-        pass
-
-    @abstractmethod
-    def mutate(self, *weights: list):
-        pass
-
-    @abstractmethod
-    def set_random_weights(self):
-        pass
-
-    @abstractmethod
-    def set_param_set(self, param_set):
-        pass
-
-    @abstractmethod
-    def inhibit(self):
-        pass
-
-
 class STDPLayer(Layer):
-    def __init__(self, timer, neuron_count, layer_number, wta=False, **neuron_args):
+    def __init__(self, timer, shape: Tuple[int], layer_number: int, wta:bool = False, **neuron_args):
         self.timer = timer
-        self.neuron_count = neuron_count
+        self.shape = shape
         self.layer_number = layer_number
 
         self.output = []
-        self.neurons = [STDPNeuron(timer, **neuron_args) for _ in range(self.neuron_count)]
+        self.neurons = np.array([STDPNeuron(timer, **neuron_args) for __ in range(self.shape[1]*self.shape[0])])
+
         self.wta = wta
 
+    def reset(self):
+        for neuron in self.neurons:
+            neuron.reset()
+
     def update(self, *input_spikes):
-        neurons = self.neurons
         wta = self.wta
-        output = [neuron.update(*input_spikes) for neuron in neurons]
+        output = np.array([[self.neurons[x*self.shape[1]+y].update(*input_spikes)
+                            for y in range(self.shape[1])]
+                           for x in range(self.shape[0])])
+        input = np.array([[self.neurons[x*self.shape[1]+y].input_level
+                            for y in range(self.shape[1])]
+                           for x in range(self.shape[0])])
+        self.output = output.flatten()
 
-        self.output = output
-
-        for output, fired_neuron in zip(output, neurons):
-            if output:
-                for neuron in neurons:
-                    if neuron != fired_neuron:
-                        neuron.inhibit()
-                        if wta:
-                            neuron.input_level = 0
+        for row in range(self.shape[0]):
+            for col in range(self.shape[1]):
+                if output[row][col]:
+                    neighbourhood = [(-1, 0), (0, -1), (0, 1), (1, 0)]
+                    row_edge_cases = [[(-1,0)], None, None, [(1, 0)]]
+                    col_edge_cases = [[(0,-1)], None, None, [(0, 1)]]
+                    if row_edge_cases[row] is not None:
+                        neighbourhood.remove(*row_edge_cases[row])
+                    if col_edge_cases[col] is not None:
+                        neighbourhood.remove(*col_edge_cases[col])
+                    [self.neurons[(row+i)*self.shape[1]+col+j].inhibit() for i,j in neighbourhood]
 
     def get_synapses(self):
         return [
@@ -443,8 +461,8 @@ class STDPNeuron(Neuron):
 
         self.refractory = False
         self.ltp_synapses = {}  # записано, до какого момента при срабатывании синапс увеличит вес
-        self.t_spike = 0
-        self.t_last_spike = 0
+        self.t_spike = -1
+        self.t_last_spike = -1
         self.inhibited_by = -1  # момент времени до начала симуляции
         self.inhibited_on = -1
 
@@ -460,12 +478,15 @@ class STDPNeuron(Neuron):
     def update(self, *synapses):
         """обработать пришедшие данные и обновить состояние нейрона. Основная функция"""
         super().update(*synapses)
+        if self.t_last_spike == -1:
+            self.t_spike = self.t_last_spike = self.timer.clock
         if self.timer.clock <= self.inhibited_by:
             return 0
         self.output_level = 0
         self.refractory = False
         for synapse in synapses[0]:
-            self.t_last_spike, self.t_spike = self.t_spike, self.timer.clock
+            self.t_last_spike = self.t_spike
+            self.t_spike = self.timer.clock
             self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.param_set.t_leak)
             self.input_level += self.weights[synapse]
             self.ltp_synapses[synapse] = self.timer.clock + self.param_set.t_ltp

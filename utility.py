@@ -1,7 +1,7 @@
 class Defaults(object):
     """docstring for defaults"""
     time_bits = 23
-    time_mask = 0x3fffff
+    time_mask = 0x7fffff
     data_bits = 40
 
     param_set = {
