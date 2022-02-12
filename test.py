@@ -1,4 +1,4 @@
-from model import *
+from main import *
 from utility import *
 import numpy as np
 import pickle

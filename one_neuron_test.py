@@ -1,4 +1,4 @@
-from model import *
+from main import *
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt

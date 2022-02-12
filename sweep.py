@@ -1,7 +1,7 @@
 from os import mkdir
 import itertools
 
-from model import *
+from main import *
 
 def save_output_to_file(indicator, journals):
     xdata, ydata = [], []

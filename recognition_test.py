@@ -1,4 +1,4 @@
-from model import *
+from main import *
 from utility import *
 import time
 import numpy as np
