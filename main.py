@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import imageio as iio
 import configparser as cm
+import AERGen as ag
 import random
 import pickle
 
@@ -12,50 +13,42 @@ from utility import *
 
 
 class DataFeed:
-    def __init__(self, source, type):
-        self.buf = ""
+    def __init__(self, type, model):
+        self.buf = []
         self.type = type
-        self.load(source)
+        self.source = ""
         self.terminate = False
+        self.time_offset = 0
+        self.model = model
 
-    def load(self, source):
-        if self.type == "file":
-            with open(source, "r") as file:
-                hexadecimals = "0123456789abcdef"
-                while char := file.read(1):
-                    if char in hexadecimals:
-                        self.buf += char
+    def load(self, source, data=None):
+        self.source = source
+        if self.type == "iter":
+            self.buf = data
         if self.type == "stream":
             self.connect_stream()
 
     def next_events(self):
-        ev = []
-        if self.type == "file":
-            rest = len(self.buf)
-            if rest < 20:
-                self.terminate = True
-                return [parse_aer(self.buf[0:10])]
-            i = 1
-            ev = [parse_aer(self.buf[0:10])]
-            time = parse_aer(self.buf[0:10])[1]
-            while time == parse_aer(self.buf[i*10:(i+1)*10])[1]:
-                ev.append(parse_aer(self.buf[i*10:(i+1)*10]))
-                i += 1
-                if rest < i*10:
+        events = []
+        if self.type == "iter":
+            time = self.buf[0].time + self.time_offset
+            i = 0
+            for i in range(len(self.buf)):
+                ev = self.buf[i]
+                if ev.time > time:
                     break
-            self.buf = self.buf[i*10:]
+                events.append(ag.Event(ev.address, ev.position, ev.polarity, time))
+            self.buf = self.buf[i:]
+            return events
         if self.type == "stream":
-            ev = self.await_event()
-        return ev
+            events = self.await_event()
+        return events
 
     def connect_stream(self):
         pass
 
     def await_event(self):
         pass
-
-
-Event = namedtuple("Event", ["address", "time"])
 
 NeuronParametersSet = namedtuple("NeuronParametersSet", ["i_thres",
                                                          "t_ltp",
@@ -118,7 +111,7 @@ class Neuron:
             self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.param_set.t_leak)
             if self.weights[event.address] > self.param_set.w_max + self.times_fired*self.param_set.a_dec:
                 self.input_level += self.param_set.w_max
-            elif self.weights[event.address] < self.param_set.w_min + self.times_fired*self.param_set.a_dec
+            elif self.weights[event.address] < self.param_set.w_min + self.times_fired*self.param_set.a_dec:
                 self.input_level += self.param_set.w_min
             else:
                 self.input_level += self.weights[event.address] - self.times_fired * self.param_set.a_dec
@@ -152,9 +145,8 @@ class Neuron:
         self.weights = {i: random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min) for i in self.inputs}
 
 
-def construct_network(learn=True):
+def construct_network(feed_type, file="network1.txt", learn=True):
     config = cm.ConfigParser()
-    file = "network1.txt"
     with open(file, 'r') as f:
         config.read_file(f)
     nps = NeuronParametersSet(config["NEURON PARAMETERS"]["i_thres"],
@@ -168,9 +160,11 @@ def construct_network(learn=True):
                               config["NEURON PARAMETERS"]["a_dec"],
                               config["NEURON PARAMETERS"]["a_inc"],
                               config["NEURON PARAMETERS"]["activation_function"])
-    lps = LayerParametersSet(config["NEURON PARAMETERS"]["inhib_radius"])
+    lps = LayerParametersSet(config["LAYER PARAMETERS"]["inhib_radius"])
     model = Model(state={}, time=0, logs=[], layers=[], neuron_parameters_set=nps, layer_parameters_set=lps)
-    structure = config["NEURON PARAMETERS"]["structure"]
+    structure = config["LAYER PARAMETERS"]["structure"]
+    if isinstance(structure, str):
+        structure = [structure]
     layer = ""
     for layer in structure:
         model.state.update({s: 0 for s in config[layer]["inputs"]})
@@ -180,6 +174,8 @@ def construct_network(learn=True):
             model.layers[-1].update({'shape': config[layer]["shape"]})
     model.outputs = config[layer]["outputs"]
     model.state.update({s: 0 for s in model.outputs})
+    feed = DataFeed(feed_type, model)
+    return model, feed
 
 
 def layer_update(model, layer):
@@ -195,10 +191,8 @@ def layer_update(model, layer):
                             layer["neurons"][(row + i) * layer["shape"][1] + col + j].inhibit()
 
 
-
-def loop(model, feed_source, feed_type):
-    feed = DataFeed(feed_source, feed_type)
-    while not feed.terminate:
+def next_network_cycle(model, feed):
+    if not feed.terminate:
         next_ev = feed.next_events()
         model.time = next_ev[0][1]
         for synapse, time in next_ev:
@@ -209,11 +203,12 @@ def loop(model, feed_source, feed_type):
 
         for o in model.outputs:
             if model.state[o]:
-                model.logs.append((o, feed_source))
+                model.logs.append((o, feed.source))
                 model.state[o] = 0
 
     label_neurons(model)
     save_attention_maps(model, "/")
+
 
 def label_neurons(model):
 
@@ -250,15 +245,6 @@ def label_neurons(model):
     for neuron in model.layers[-1]:
         neuron.label = rename_dict[neuron.output_address]
 
-def parse_aer(raw_data: str) -> Tuple[str, int]:
-    raw_data = int(raw_data, base=16)
-    synapse = raw_data >> Defaults.time_bits
-    synapse = synapse << 3
-    synapse = format(synapse, '05x')
-    time = raw_data & Defaults.time_mask
-    return synapse, time
-
-
 def save_attention_maps(model, folder: str):
     attention_maps = []
     pixels_on = Defaults.pixels[1::2]
@@ -274,7 +260,7 @@ def save_attention_maps(model, folder: str):
         plt.imshow(map)
         plt.savefig(f"{folder}/att_map_{address}_{label}.png")
 
-def test(model):
+def test():
     arrows = pickle.load(open('resources\\arrows.bin', 'rb'))
 
     white_square = np.multiply(np.ones((28, 28)), 255)
@@ -283,14 +269,19 @@ def test(model):
     frames = []
     frames_shown = 0
 
+    model = construct_network()
+    loop(model, "resources\\out.bin")
+
     frame = model.next()
+    # переписать код используя AERGEN
+    # возможно необходимо внедрить его внутрь loop или использовать Наблюдателя
     while isinstance(frame, np.ndarray):
         if any(frame):
             frames_shown = 0
             current_arrow = arrows[frame[0]]
         if frames_shown > 50:
             current_arrow = np.copy(white_square)
-        #data = model.raw_data
+        # data = model.raw_data
         synapse = parse_aer(data)[0][0]
         x_coord = int(synapse[0:2], base=16)
         y_coord = int(synapse[2:4], base=16)
@@ -298,6 +289,6 @@ def test(model):
         current_frame[y_coord][x_coord] = color
         frames.append(np.concatenate((current_frame, current_arrow)).astype(np.uint8))
         frames_shown += 1
-        #frame = model.next()
+        # frame = model.next()
 
     iio.mimwrite('animation2.gif', frames, fps=60)

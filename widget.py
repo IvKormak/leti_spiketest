@@ -3,13 +3,14 @@ import os
 from pathlib import Path
 import sys
 
-from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QComboBox, QSpinBox, QFileDialog
+from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QComboBox, QSpinBox, QFileDialog, QCheckBox, QVBoxLayout
 from PySide6.QtCore import QFile, QTimer, QDir
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtGui import QPixmap, QImage, qRgb
 
 import AERGen as ag
 import configmanager as cm
+import main
 import numpy as np
 
 
@@ -39,9 +40,19 @@ class Widget(QWidget):
         self.datasetPreview.clicked.connect(self._datasetPreview)
         self.datasetPreview.setEnabled(False)
 
+        self.chooseConf = self.findChild(QPushButton, "chooseConf")
+        self.chooseConf.clicked.connect(self._chooseConf)
+        self.numOfSets = self.findChild(QComboBox, "numOfSets")
+        self.letsGo = self.findChild(QPushButton, "letsGo")
+        self.letsGo.clicked.connect(self._letsGo)
+
         self.preview = self.findChild(QLabel, "preview")
+        self.runLearning = self.findChild(QLabel, "trainResult")
+        self.listOfSets = self.findChild(QVBoxLayout, "listOfSets")
+        self.chosenSets = []
 
         self.dataset = None
+        self.network_conf = ""
 
         self.renderComplete = False
         self.renderTimer = None
@@ -65,7 +76,17 @@ class Widget(QWidget):
         traces = self.db.read_trace_entries()
         for trace in traces:
             self.datasetCombo.addItem(trace.trace_alias, userData=trace.trace_path)
+            button = QCheckBox(trace.trace_alias)
+            button.stateChanged.connect(self.toggleDataSet(trace.trace_path))
+            self.listOfSets.insertWidget(0, button)
 
+    def toggleDataSet(self, alias):
+        def _(state):
+            if not state:
+                self.chosenSets.remove(alias)
+            else:
+                self.chosenSets.append(alias)
+        return _
 
     def _datasetPreview(self):
         self.renderPreview()
@@ -145,11 +166,21 @@ class Widget(QWidget):
         if not path:
             path = self.datasetCombo.currentData()
         with open(path, 'r') as f:
-            self.dataset = [ag.aer_decode(ev)['event'] for ev in f.readline().split(' ')]
+            self.dataset = [ag.aer_decode(ev) for ev in f.readline().split(' ')]
         self.datasetPreview.setEnabled(True)
 
-    def _datasetPreview(self):
-        self.renderPreview()
+    def _chooseConf(self):
+        self.network_conf = self.path.relativeFilePath(QFileDialog.getOpenFileName(self, "Open file", "")[0])
+
+    def _letsGo(self):
+        if not self.network_conf:
+            return
+        model, feed = main.construct_network("iter", self.network_conf)
+        
+        datasets = []
+        for path in self.chosenSets:
+            with open(path, 'r') as f:
+                datasets.append([ag.aer_decode(ev) for ev in f.readline().split(' ')])
 
 if __name__ == "__main__":
     app = QApplication([])

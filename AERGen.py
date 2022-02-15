@@ -5,7 +5,7 @@ from typing import Union, Tuple, List
 import numpy as np
 
 Position = namedtuple('Position', ['x', 'y'])
-Event = namedtuple('Event', ['position', 'polarity', 'time'])
+Event = namedtuple('Event', ['address', 'position', 'polarity', 'time'])
 
 TIME_BITS = 23
 TIME_MASK = 0x7fffff
@@ -69,7 +69,7 @@ class AERGen:
         for y in range(0,28):
             for x in range(0,28):
                 if map[y][x] != self.pixmap[y][x]:
-                    ev = Event(Position(x+1, y+1), 1 if map[y][x] else 0, round(self.time))
+                    ev = Event(synapse_encode(x+1, y+1, 1), Position(x+1, y+1), 1 if map[y][x] else 0, round(self.time))
                     self.events.append(ev)
                     diff.append(ev)
         return diff
@@ -87,6 +87,10 @@ def aer_encode(event:Union[Event, List[Event]]):
         records.append(record)
     return records
 
+def synapse_encode(x, y, p):
+    return f"{format(x, '02x')}{format(y, '02x')}{p<<3}"
+
+
 def aer_decode(entry:str):
     entry = int(entry.strip(), base = 16)
     synapse = entry >> TIME_BITS
@@ -96,7 +100,7 @@ def aer_decode(entry:str):
     y = int(synapse[2:4], base=16)
     p = synapse[4] == '8'
     time = entry & TIME_MASK
-    return {'synapse': synapse, 'event': Event(Position(x, y), p, time)}
+    return Event(synapse, Position(x, y), p, time)
 
 if __name__ == "__main__":
     test_trace = AERGen(radius = 3, speed = 5000)
