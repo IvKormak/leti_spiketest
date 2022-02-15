@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from collections import namedtuple
-from typing import Union, Tuple, Dict, List, Type, Any, Callable
 import matplotlib.pyplot as plt
 import numpy as np
 import imageio as iio
@@ -8,6 +7,7 @@ import configparser as cm
 import AERGen as ag
 import random
 import pickle
+import os
 
 from utility import *
 
@@ -23,6 +23,7 @@ class DataFeed:
 
     def load(self, source, data=None):
         self.source = source
+        self.terminate = False
         if self.type == "iter":
             self.buf = data
         if self.type == "stream":
@@ -31,6 +32,9 @@ class DataFeed:
     def next_events(self):
         events = []
         if self.type == "iter":
+            if len(self.buf) == 1:
+                self.terminate = True
+                return self.buf
             time = self.buf[0].time + self.time_offset
             i = 0
             for i in range(len(self.buf)):
@@ -84,7 +88,7 @@ class Neuron:
         self.output_address = output_address
         self.learn = learn
         self.inputs = inputs
-        self.weights = self.set_random_weights() if not weights else weights
+        self.weights = self.random_weights() if not weights else weights
 
         self.input_level = 0
         self.output_level = 0
@@ -101,22 +105,22 @@ class Neuron:
         if self.model.time <= self.inhibited_by:
             return False
         self.output_level = 0
-        events = [self.model.state[address] for address in self.inputs]
-        for address in self.inputs:
-            self.model.state[address] = 0
+        events = [(self.model.state[address], address) for address in self.inputs if self.model.state[address]]
         if not events:
             return False
-        for event in events:
+        for event, address in events:
+            self.model.state[address] = 0
             self.t_last_spike, self.t_spike = self.t_spike, self.model.time
             self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.param_set.t_leak)
-            if self.weights[event.address] > self.param_set.w_max + self.times_fired*self.param_set.a_dec:
+            if self.weights[address] > self.param_set.w_max + self.times_fired*self.param_set.a_dec:
                 self.input_level += self.param_set.w_max
-            elif self.weights[event.address] < self.param_set.w_min + self.times_fired*self.param_set.a_dec:
+            elif self.weights[address] < self.param_set.w_min + self.times_fired*self.param_set.a_dec:
                 self.input_level += self.param_set.w_min
             else:
-                self.input_level += self.weights[event.address] - self.times_fired * self.param_set.a_dec
-            self.ltp_times[event.address] = self.model.time + self.param_set.t_ltp
-        self.output_level = self.param_set.activation_function(self.input_level)
+                self.input_level += self.weights[address] - self.times_fired * self.param_set.a_dec
+            self.ltp_times[address] = self.model.time + self.param_set.t_ltp
+        if self.param_set.activation_function == "DeltaFunction":
+            self.output_level = int(self.input_level>self.param_set.i_thres)
         if self.output_level:
             self.times_fired += 1
             self.input_level = 0
@@ -138,41 +142,49 @@ class Neuron:
     def reset(self):
         pass
 
+    def attention_map(self):
+        pixels_on = Defaults.pixels[1::2]
+        pixels_off = Defaults.pixels[::2]
+        sum = [self.weights[on] if self.weights[on] > self.weights[off]
+               else -1 * self.weights[off]
+               for on, off in zip(pixels_on, pixels_off)]
+        return self.output_address, self.label, np.array(sum).reshape((28, 28)).transpose()
+
     def set_weights(self, weights):
         self.weights = weights.copy()
 
-    def set_random_weights(self):
-        self.weights = {i: random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min) for i in self.inputs}
+    def random_weights(self):
+        return {i: random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min) for i in self.inputs}
 
 
 def construct_network(feed_type, file="network1.txt", learn=True):
     config = cm.ConfigParser()
     with open(file, 'r') as f:
         config.read_file(f)
-    nps = NeuronParametersSet(config["NEURON PARAMETERS"]["i_thres"],
-                              config["NEURON PARAMETERS"]["t_ltp"],
-                              config["NEURON PARAMETERS"]["t_refrac"],
-                              config["NEURON PARAMETERS"]["t_inhibit"],
-                              config["NEURON PARAMETERS"]["t_leak"],
-                              config["NEURON PARAMETERS"]["w_min"],
-                              config["NEURON PARAMETERS"]["w_max"],
-                              config["NEURON PARAMETERS"]["w_random"],
-                              config["NEURON PARAMETERS"]["a_dec"],
-                              config["NEURON PARAMETERS"]["a_inc"],
+    nps = NeuronParametersSet(int(config["NEURON PARAMETERS"]["i_thres"]),
+                              int(config["NEURON PARAMETERS"]["t_ltp"]),
+                              int(config["NEURON PARAMETERS"]["t_refrac"]),
+                              int(config["NEURON PARAMETERS"]["t_inhibit"]),
+                              int(config["NEURON PARAMETERS"]["t_leak"]),
+                              int(config["NEURON PARAMETERS"]["w_min"]),
+                              int(config["NEURON PARAMETERS"]["w_max"]),
+                              float(config["NEURON PARAMETERS"]["w_random"]),
+                              int(config["NEURON PARAMETERS"]["a_dec"]),
+                              int(config["NEURON PARAMETERS"]["a_inc"]),
                               config["NEURON PARAMETERS"]["activation_function"])
-    lps = LayerParametersSet(config["LAYER PARAMETERS"]["inhib_radius"])
+    lps = LayerParametersSet(int(config["LAYER PARAMETERS"]["inhib_radius"]))
     model = Model(state={}, time=0, logs=[], layers=[], neuron_parameters_set=nps, layer_parameters_set=lps)
     structure = config["LAYER PARAMETERS"]["structure"]
     if isinstance(structure, str):
         structure = [structure]
     layer = ""
     for layer in structure:
-        model.state.update({s: 0 for s in config[layer]["inputs"]})
-        if type == "perceptron_layer":
-            model.layers.append({'neurons': [Neuron(model, output, config[layer]["inputs"], learn)
-                                             for output in config[layer]["outputs"]]})
-            model.layers[-1].update({'shape': config[layer]["shape"]})
-    model.outputs = config[layer]["outputs"]
+        model.state.update({s: 0 for s in config[layer]["inputs"].split(' ')})
+        if config[layer]["type"] == "perceptron_layer":
+            model.layers.append({'neurons': [Neuron(model, output, config[layer]["inputs"].split(' '), learn)
+                                             for output in config[layer]["outputs"].split(' ')],
+                                 'shape': [int(s) for s in config[layer]["shape"].split(' ')]})
+    model.outputs = config[layer]["outputs"].split(' ')
     model.state.update({s: 0 for s in model.outputs})
     feed = DataFeed(feed_type, model)
     return model, feed
@@ -184,7 +196,7 @@ def layer_update(model, layer):
     for row in range(layer["shape"][0]):
         for col in range(layer["shape"][1]):
             if layer["neurons"][row * layer["shape"][1] + col].output_level:
-                radius = model.LayerParametersSet.inhibit_radius
+                radius = model.layer_parameters_set.inhibit_radius
                 for i in range(-radius, radius + 1):
                     for j in range(-radius + abs(i), radius - abs(i) + 1):
                         if layer["shape"][0] > row + i >= 0 and layer["shape"][1] > col + j >= 0:
@@ -192,22 +204,22 @@ def layer_update(model, layer):
 
 
 def next_network_cycle(model, feed):
-    if not feed.terminate:
-        next_ev = feed.next_events()
-        model.time = next_ev[0][1]
-        for synapse, time in next_ev:
-            model.state[synapse] = 1
+    if feed.terminate:
+        return False
+    next_ev = feed.next_events()
+    model.time = next_ev[0].time
+    for ev in next_ev:
+        model.state[ev.address] = 1
 
-        for layer in model.layers:
-            layer_update(model, layer)
+    for layer in model.layers:
+        layer_update(model, layer)
 
-        for o in model.outputs:
-            if model.state[o]:
-                model.logs.append((o, feed.source))
-                model.state[o] = 0
+    for o in model.outputs:
+        if model.state[o]:
+            model.logs.append((o, feed.source))
+            model.state[o] = 0
 
-    label_neurons(model)
-    save_attention_maps(model, "/")
+    return True
 
 
 def label_neurons(model):
@@ -247,13 +259,10 @@ def label_neurons(model):
 
 def save_attention_maps(model, folder: str):
     attention_maps = []
-    pixels_on = Defaults.pixels[1::2]
-    pixels_off = Defaults.pixels[::2]
-    for n in model.layers[-1]:
-        sum = [n.weights[on] if n.weights[on] > n.weights[off]
-               else -1 * n.weights[off]
-               for on, off in zip(pixels_on, pixels_off)]
-        attention_maps.append((n.output_address, n.label, np.array(sum).reshape((28, 28)).transpose()))
+    if not os.path.exists(folder):
+        os.mkdir(folder)
+    for n in model.layers[-1]['neurons']:
+        attention_maps.append(n.attention_map())
 
     for address, label, map in attention_maps:
         plt.close()
@@ -292,3 +301,21 @@ def test():
         # frame = model.next()
 
     iio.mimwrite('animation2.gif', frames, fps=60)
+
+
+if __name__ == "__main__":
+    model, feed = construct_network("iter", "network1.txt")
+
+    chosenSets = ["traces/b-t.bin", "traces/t-b.bin", "traces/l-r.bin", "traces/r-l.bin", "traces/bl-tr.bin", "traces/br-tl.bin", "traces/tl-br.bin", "traces/tr-bl.bin"]
+    datasets = []
+    for path in chosenSets:
+        with open(path, 'r') as f:
+            datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+
+    for n in range(200):
+        alias, set = random.choice(datasets)
+        feed.load(alias, set)
+        while next_network_cycle(model, feed):
+            pass
+
+    save_attention_maps(model, "pleasework")

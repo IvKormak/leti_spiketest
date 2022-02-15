@@ -180,7 +180,14 @@ class Widget(QWidget):
         datasets = []
         for path in self.chosenSets:
             with open(path, 'r') as f:
-                datasets.append([ag.aer_decode(ev) for ev in f.readline().split(' ')])
+                datasets.append((path.split('/')[-1], [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+
+        for n, (alias, dataset) in enumerate(datasets):
+            feed.load(alias, dataset)
+            print(n)
+            while main.next_network_cycle():
+                pass
+
 
 if __name__ == "__main__":
     app = QApplication([])

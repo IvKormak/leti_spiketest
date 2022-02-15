@@ -10,7 +10,7 @@ w_max = 1000
 w_random = 0.7
 a_dec = 50
 a_inc = 100
-activation_function = ActivationFunctions.DeltaFunction
+activation_function = DeltaFunction
 
 [LAYER PARAMETERS]
 inhib_radius = 2
