@@ -69,7 +69,7 @@ class AERGen:
         for y in range(0,28):
             for x in range(0,28):
                 if map[y][x] != self.pixmap[y][x]:
-                    ev = Event(synapse_encode(x+1, y+1, 1), Position(x+1, y+1), 1 if map[y][x] else 0, round(self.time))
+                    ev = Event(synapse_encode(x, y, 1), Position(x, y), 1 if map[y][x] else 0, round(self.time))
                     self.events.append(ev)
                     diff.append(ev)
         return diff
