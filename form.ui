@@ -23,7 +23,7 @@
     </rect>
    </property>
    <property name="currentIndex">
-    <number>1</number>
+    <number>2</number>
    </property>
    <widget class="QWidget" name="tab">
     <attribute name="title">
@@ -52,7 +52,7 @@
           <property name="minimumSize">
            <size>
             <width>0</width>
-            <height>120</height>
+            <height>150</height>
            </size>
           </property>
           <property name="title">
@@ -64,7 +64,7 @@
              <x>9</x>
              <y>19</y>
              <width>371</width>
-             <height>84</height>
+             <height>114</height>
             </rect>
            </property>
            <layout class="QVBoxLayout" name="verticalLayout_2">
@@ -82,6 +82,13 @@
              <widget class="QPushButton" name="datasetPreview">
               <property name="text">
                <string>Предпросмотр</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="datasetDelete">
+              <property name="text">
+               <string>Удалить</string>
               </property>
              </widget>
             </item>
@@ -142,20 +149,29 @@
                 <item row="1" column="0">
                  <widget class="QSpinBox" name="x0">
                   <property name="minimum">
-                   <number>1</number>
+                   <number>0</number>
                   </property>
                   <property name="maximum">
-                   <number>28</number>
+                   <number>27</number>
+                  </property>
+                  <property name="singleStep">
+                   <number>1</number>
+                  </property>
+                  <property name="value">
+                   <number>0</number>
                   </property>
                  </widget>
                 </item>
                 <item row="1" column="1">
                  <widget class="QSpinBox" name="y0">
                   <property name="minimum">
-                   <number>1</number>
+                   <number>0</number>
                   </property>
                   <property name="maximum">
-                   <number>28</number>
+                   <number>27</number>
+                  </property>
+                  <property name="value">
+                   <number>0</number>
                   </property>
                  </widget>
                 </item>
@@ -195,26 +211,26 @@
                 <item row="1" column="0">
                  <widget class="QSpinBox" name="x1">
                   <property name="minimum">
-                   <number>1</number>
+                   <number>0</number>
                   </property>
                   <property name="maximum">
-                   <number>28</number>
+                   <number>27</number>
                   </property>
                   <property name="value">
-                   <number>28</number>
+                   <number>27</number>
                   </property>
                  </widget>
                 </item>
                 <item row="1" column="1">
                  <widget class="QSpinBox" name="y1">
                   <property name="minimum">
-                   <number>1</number>
+                   <number>0</number>
                   </property>
                   <property name="maximum">
-                   <number>28</number>
+                   <number>27</number>
                   </property>
                   <property name="value">
-                   <number>28</number>
+                   <number>27</number>
                   </property>
                  </widget>
                 </item>
@@ -438,7 +454,20 @@
         <item>
          <layout class="QGridLayout" name="gridLayout_4">
           <item row="1" column="0">
-           <widget class="QSpinBox" name="numOfSets"/>
+           <widget class="QSpinBox" name="numOfSets">
+            <property name="minimum">
+             <number>1</number>
+            </property>
+            <property name="maximum">
+             <number>10009</number>
+            </property>
+            <property name="singleStep">
+             <number>1</number>
+            </property>
+            <property name="value">
+             <number>200</number>
+            </property>
+           </widget>
           </item>
           <item row="1" column="1">
            <widget class="QPushButton" name="letsGo">
@@ -493,14 +522,19 @@
      </layout>
     </widget>
    </widget>
+   <widget class="QWidget" name="tab_3">
+    <attribute name="title">
+     <string>Распознание</string>
+    </attribute>
+   </widget>
   </widget>
   <widget class="QLabel" name="statusbar">
    <property name="geometry">
     <rect>
-     <x>0</x>
+     <x>10</x>
      <y>580</y>
-     <width>801</width>
-     <height>16</height>
+     <width>791</width>
+     <height>20</height>
     </rect>
    </property>
    <property name="text">

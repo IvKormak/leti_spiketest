@@ -34,14 +34,15 @@ class DataFeed:
         if self.type == "iter":
             if len(self.buf) == 1:
                 self.terminate = True
+                self.time_offset += self.buf[0].time
                 return self.buf
-            time = self.buf[0].time + self.time_offset
+            time = self.buf[0].time
             i = 0
             for i in range(len(self.buf)):
                 ev = self.buf[i]
                 if ev.time > time:
                     break
-                events.append(ag.Event(ev.address, ev.position, ev.polarity, time))
+                events.append(ag.Event(ev.address, ev.position, ev.polarity, time + self.time_offset))
             self.buf = self.buf[i:]
             return events
         if self.type == "stream":
@@ -100,41 +101,40 @@ class Neuron:
         self.label = ""
 
     def update(self):
+        self.output_level = 0
         if self.t_last_spike == -1:
             self.t_spike = self.t_last_spike = self.model.time
         if self.model.time <= self.inhibited_by:
-            return False
-        self.output_level = 0
+            return 0
         events = [(self.model.state[address], address) for address in self.inputs if self.model.state[address]]
         if not events:
             return False
         for event, address in events:
-            self.model.state[address] = 0
             self.t_last_spike, self.t_spike = self.t_spike, self.model.time
             self.input_level *= np.exp(-(self.t_spike - self.t_last_spike) / self.param_set.t_leak)
-            if self.weights[address] > self.param_set.w_max + self.times_fired*self.param_set.a_dec:
-                self.input_level += self.param_set.w_max
-            elif self.weights[address] < self.param_set.w_min + self.times_fired*self.param_set.a_dec:
-                self.input_level += self.param_set.w_min
-            else:
-                self.input_level += self.weights[address] - self.times_fired * self.param_set.a_dec
+            self.input_level += self.weights[address] - self.times_fired * self.param_set.a_dec
             self.ltp_times[address] = self.model.time + self.param_set.t_ltp
         if self.param_set.activation_function == "DeltaFunction":
             self.output_level = int(self.input_level>self.param_set.i_thres)
         if self.output_level:
             self.times_fired += 1
             self.input_level = 0
+            self.model.state[self.output_address] = 1
             self.inhibited_by = self.t_spike + self.param_set.t_refrac
             if self.learn:
                 not_rotten = [k for k in self.ltp_times.keys() if
                               self.ltp_times[k] >= self.t_spike - self.param_set.t_ltp]
                 for synapse in not_rotten:
                     self.weights[synapse] += self.param_set.a_inc + self.param_set.a_dec
+                    if self.weights[synapse] > self.param_set.w_max + self.times_fired*self.param_set.a_dec:
+                        self.weights[synapse] = self.param_set.w_max + self.times_fired*self.param_set.a_dec
+                    elif self.weights[synapse] < self.param_set.w_min + self.times_fired*self.param_set.a_dec:
+                        self.weights[synapse] = self.param_set.w_min + self.times_fired*self.param_set.a_dec
                 self.ltp_times = {}
         return self.output_level
 
     def inhibit(self):
-        if self.inhibited_by > self.model.time:
+        if self.inhibited_by > self.model.time and self.output_level:
             self.inhibited_by += self.param_set.t_inhibit
         else:
             self.inhibited_by = self.model.time + self.param_set.t_inhibit
@@ -189,6 +189,16 @@ def construct_network(feed_type, file="network1.txt", learn=True):
     feed = DataFeed(feed_type, model)
     return model, feed
 
+def load_network(model, feed_type, learn=False):
+    model.time = 0
+    model.state = {s: 0 for s in model.state}
+    model.logs = []
+    for layer in model.layers:
+        for neuron in layer:
+            neuron.learn = learn
+    feed = DataFeed(feed_type, model)
+    return model, feed
+
 
 def layer_update(model, layer):
     [neuron.update() for neuron in layer["neurons"]]
@@ -217,30 +227,33 @@ def next_network_cycle(model, feed):
     for o in model.outputs:
         if model.state[o]:
             model.logs.append((o, feed.source))
-            model.state[o] = 0
 
+    for k in model.state.keys():
+        model.state[k] = 0
     return True
 
 
 def label_neurons(model):
-
     neuron_journals = [l[0] for l in model.logs]
     teacher_journals = [l[1] for l in model.logs]
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
 
     R = [[] for _ in all_neurons]
-    C = teacher_journals
+    C = []
 
     for fired_neuron, right_answer in model.logs:
+        C.append([0 if i != all_traces.index(right_answer) else 1 for i in range(len(R))])
         for n in range(len(R)):
-            R[n].append(all_neurons[n] == fired_neuron)
+            R[n].append(int(all_neurons[n] == fired_neuron))
+
 
     R, C = np.array(R), np.array(C)
     F = np.matmul(R, C)
 
     trace_numbers = list(range(C.shape[1]))
     neuron_numbers = list(range(R.shape[0]))
+
     rename_dict = {}
 
     for neuron_number in neuron_numbers:
@@ -252,9 +265,9 @@ def label_neurons(model):
             if np.real(F[neuron_number][trace_number]) > maximum_score_for_trace:
                 maximum_score_for_trace = F[neuron_number][trace_number]
                 trace_best_guessed = trace_number
-        rename_dict[all_neurons[neuron_number]] = all_traces[trace_best_guessed]
+        rename_dict[all_neurons[neuron_number]] = os.path.basename(all_traces[trace_best_guessed])
 
-    for neuron in model.layers[-1]:
+    for neuron in model.layers[-1]['neurons']:
         neuron.label = rename_dict[neuron.output_address]
 
 def save_attention_maps(model, folder: str):
@@ -304,18 +317,27 @@ def test():
 
 
 if __name__ == "__main__":
-    model, feed = construct_network("iter", "network1.txt")
 
-    chosenSets = ["traces/b-t.bin", "traces/t-b.bin", "traces/l-r.bin", "traces/r-l.bin", "traces/bl-tr.bin", "traces/br-tl.bin", "traces/tl-br.bin", "traces/tr-bl.bin"]
+    sets1000 = ["traces/b-t-1000.bin", "traces/l-r-1000.bin", "traces/r-l-1000.bin", "traces/t-b-1000.bin"]
+    sets3000 = ["traces/b-t-3000.bin", "traces/l-r-3000.bin", "traces/r-l-3000.bin", "traces/t-b-3000.bin"]
+    sets5000 = ["traces/b-t-5000.bin", "traces/l-r-5000.bin", "traces/r-l-5000.bin", "traces/t-b-5000.bin"]
+    sets100 = ["traces/b-t-100.bin", "traces/l-r-100.bin", "traces/r-l-100.bin", "traces/t-b-100.bin"]
+    sets500 = ["traces/b-t-500.bin", "traces/l-r-500.bin", "traces/r-l-500.bin", "traces/t-b-500.bin"]
+
+    model, feed = construct_network("iter", "network1.txt")
+    chosenSets = sets500
     datasets = []
     for path in chosenSets:
         with open(path, 'r') as f:
             datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
 
-    for n in range(200):
-        alias, set = random.choice(datasets)
-        feed.load(alias, set)
+    for n in range(50):
+        alias, dataset = random.choice(datasets)
+        feed.load(alias, dataset)
         while next_network_cycle(model, feed):
             pass
 
-    save_attention_maps(model, "pleasework")
+    label_neurons(model)
+
+    save_attention_maps(model, "sets500")
+    input()

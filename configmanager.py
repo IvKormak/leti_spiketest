@@ -25,6 +25,11 @@ class DBManager:
         self.cur.execute(query)
         self.con.commit()
 
+    def delete_trace_entry(self, path):
+        query = f"DELETE FROM traces WHERE path = '{path}'"
+        self.cur.execute(query)
+        self.con.commit()
+
     def read_trace_entries(self):
         query = "SELECT * FROM traces"
         self.cur.execute(query)

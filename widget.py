@@ -1,5 +1,6 @@
 # This Python file uses the following encoding: utf-8
 import os
+import pickle
 from pathlib import Path
 import sys
 
@@ -12,6 +13,7 @@ import AERGen as ag
 import configmanager as cm
 import main
 import numpy as np
+import random
 
 
 class Widget(QWidget):
@@ -26,6 +28,8 @@ class Widget(QWidget):
         "speed":self.findChild(QSpinBox, "speed")
         }
 
+        self.statusbar = self.findChild(QLabel, "statusbar")
+
         self.previewNew = self.findChild(QPushButton, "previewNew")
         self.previewNew.clicked.connect(self._previewNew)
         self.appendToExisting = self.findChild(QPushButton, "appendToExisting")
@@ -39,10 +43,12 @@ class Widget(QWidget):
         self.datasetPreview = self.findChild(QPushButton, "datasetPreview")
         self.datasetPreview.clicked.connect(self._datasetPreview)
         self.datasetPreview.setEnabled(False)
+        self.datasetDelete = self.findChild(QPushButton, "datasetDelete")
+        self.datasetDelete.clicked.connect(self._datasetDelete)
 
         self.chooseConf = self.findChild(QPushButton, "chooseConf")
         self.chooseConf.clicked.connect(self._chooseConf)
-        self.numOfSets = self.findChild(QComboBox, "numOfSets")
+        self.numOfSets = self.findChild(QSpinBox, "numOfSets")
         self.letsGo = self.findChild(QPushButton, "letsGo")
         self.letsGo.clicked.connect(self._letsGo)
 
@@ -79,6 +85,10 @@ class Widget(QWidget):
             button = QCheckBox(trace.trace_alias)
             button.stateChanged.connect(self.toggleDataSet(trace.trace_path))
             self.listOfSets.insertWidget(0, button)
+
+    def _datasetDelete(self):
+        self.db.delete_trace_entry(self.datasetCombo.currentData())
+        self.loadTraces()
 
     def toggleDataSet(self, alias):
         def _(state):
@@ -135,7 +145,7 @@ class Widget(QWidget):
             y_coord = ev.position.y
             color = ev.polarity * 255
             try:
-                current_frame[y_coord-1][x_coord-1] = color
+                current_frame[y_coord][x_coord] = color
             except:
                 pass
             frames_shown += 1
@@ -170,7 +180,7 @@ class Widget(QWidget):
         self.datasetPreview.setEnabled(True)
 
     def _chooseConf(self):
-        self.network_conf = self.path.relativeFilePath(QFileDialog.getOpenFileName(self, "Open file", "")[0])
+        self.network_conf = self.path.relativeFilePath(QFileDialog.getOpenFileName(self, "Выберите файл с конфигурацией модели", "")[0])
 
     def _letsGo(self):
         if not self.network_conf:
@@ -180,14 +190,25 @@ class Widget(QWidget):
         datasets = []
         for path in self.chosenSets:
             with open(path, 'r') as f:
-                datasets.append((path.split('/')[-1], [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+                datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
 
-        for n, (alias, dataset) in enumerate(datasets):
-            feed.load(alias, dataset)
-            print(n)
-            while main.next_network_cycle():
+        for n in range(self.numOfSets.value()):
+            print(f"trace {n} of {self.numOfSets.value()}")
+            alias, set = random.choice(datasets)
+            feed.load(alias, set)
+            while main.next_network_cycle(model, feed):
                 pass
 
+        main.label_neurons(model)
+
+        folderToSave = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения файлов", "")
+
+        main.save_attention_maps(model, folderToSave)
+
+        with open(f"{folderToSave}\\model.pkl", "wb") as f:
+                  pickle.dump(model, f)
+
+        del model, feed
 
 if __name__ == "__main__":
     app = QApplication([])
