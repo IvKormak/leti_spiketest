@@ -8,7 +8,7 @@ import AERGen as ag
 import random
 import pickle
 import os
-
+import time
 from utility import *
 
 
@@ -106,7 +106,12 @@ class Neuron:
             self.t_spike = self.t_last_spike = self.model.time
         if self.model.time <= self.inhibited_by:
             return 0
-        events = [(self.model.state[address], address) for address in self.inputs if self.model.state[address]]
+
+        state = self.model.state #копируем для ускорения доступа
+        inputs = self.inputs
+
+        events = [(state[address], address) for address in self.inputs if state[address]]
+
         if not events:
             return False
         for event, address in events:
@@ -117,6 +122,10 @@ class Neuron:
         if self.param_set.activation_function == "DeltaFunction":
             self.output_level = int(self.input_level>self.param_set.i_thres)
         if self.output_level:
+
+            min_level = self.param_set.w_min + self.times_fired*self.param_set.a_dec
+            max_level = self.param_set.w_max + self.times_fired*self.param_set.a_dec
+
             self.times_fired += 1
             self.input_level = 0
             self.model.state[self.output_address] = 1
@@ -124,12 +133,14 @@ class Neuron:
             if self.learn:
                 not_rotten = [k for k in self.ltp_times.keys() if
                               self.ltp_times[k] >= self.t_spike - self.param_set.t_ltp]
+                rest = [k for k in self.inputs if k not in not_rotten and
+                        self.weights[k] < min_level]
                 for synapse in not_rotten:
                     self.weights[synapse] += self.param_set.a_inc + self.param_set.a_dec
-                    if self.weights[synapse] > self.param_set.w_max + self.times_fired*self.param_set.a_dec:
-                        self.weights[synapse] = self.param_set.w_max + self.times_fired*self.param_set.a_dec
-                    elif self.weights[synapse] < self.param_set.w_min + self.times_fired*self.param_set.a_dec:
-                        self.weights[synapse] = self.param_set.w_min + self.times_fired*self.param_set.a_dec
+                    if self.weights[synapse] > max_level:
+                        self.weights[synapse] = max_level
+                for synapse in rest:
+                    self.weights[synapse] = min_level
                 self.ltp_times = {}
         return self.output_level
 
@@ -140,7 +151,15 @@ class Neuron:
             self.inhibited_by = self.model.time + self.param_set.t_inhibit
 
     def reset(self):
-        pass
+        self.weights = self.random_weights()
+        self.input_level = 0
+        self.output_level = 0
+        self.t_last_spike = -1
+        self.t_spike = -1
+        self.inhibited_by = -1
+        self.times_fired = 0
+        self.ltp_times = {}
+        self.label = ""
 
     def attention_map(self):
         pixels_on = Defaults.pixels[1::2]
@@ -194,11 +213,19 @@ def load_network(model, feed_type, learn=False):
     model.state = {s: 0 for s in model.state}
     model.logs = []
     for layer in model.layers:
-        for neuron in layer:
+        for neuron in layer['neurons']:
             neuron.learn = learn
     feed = DataFeed(feed_type, model)
     return model, feed
 
+def reset_network(model, feed):
+    model.time = 0
+    model.state = {s: 0 for s in model.state}
+    model.logs = []
+    for layer in model.layers:
+        for neuron in layer['neurons']:
+            neuron.reset()
+    feed.time_offset = 0
 
 def layer_update(model, layer):
     [neuron.update() for neuron in layer["neurons"]]
@@ -267,8 +294,12 @@ def label_neurons(model):
                 trace_best_guessed = trace_number
         rename_dict[all_neurons[neuron_number]] = os.path.basename(all_traces[trace_best_guessed])
 
+    unique_labels = {l: list(rename_dict.values()).count(l) for l in set(rename_dict.values())}
+
     for neuron in model.layers[-1]['neurons']:
         neuron.label = rename_dict[neuron.output_address]
+
+    return unique_labels
 
 def save_attention_maps(model, folder: str):
     attention_maps = []
@@ -322,22 +353,50 @@ if __name__ == "__main__":
     sets3000 = ["traces/b-t-3000.bin", "traces/l-r-3000.bin", "traces/r-l-3000.bin", "traces/t-b-3000.bin"]
     sets5000 = ["traces/b-t-5000.bin", "traces/l-r-5000.bin", "traces/r-l-5000.bin", "traces/t-b-5000.bin"]
     sets100 = ["traces/b-t-100.bin", "traces/l-r-100.bin", "traces/r-l-100.bin", "traces/t-b-100.bin"]
-    sets500 = ["traces/b-t-500.bin", "traces/l-r-500.bin", "traces/r-l-500.bin", "traces/t-b-500.bin"]
+    sets500 = ["traces/b-t-500.bin", "traces/l-r-500.bin", "traces/r-l-500.bin", "traces/t-b-500.bin",
+               "traces/bl-tr-500.bin", "traces/tl-br-500.bin", "traces/br-tl-500.bin", "traces/tr-bl-500.bin"]
 
-    model, feed = construct_network("iter", "network1.txt")
+    """sweep = [("resources/models/network2.txt", "0wr7")]"""
+    sweep = [("resources/models/networkb.txt", "70inc60dec07wr1700ltp")]
+
+    """model, feed = construct_network("iter", "resources/models/network2.txt")
     chosenSets = sets500
     datasets = []
     for path in chosenSets:
         with open(path, 'r') as f:
             datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
-
-    for n in range(50):
+    for n in range(75):
         alias, dataset = random.choice(datasets)
         feed.load(alias, dataset)
         while next_network_cycle(model, feed):
-            pass
+            pass"""
 
-    label_neurons(model)
 
-    save_attention_maps(model, "sets500")
-    input()
+    for file, folder in sweep:
+        ts = time.time()
+        model, feed = construct_network("iter", file)
+        chosenSets = sets500
+        datasets = []
+        for path in chosenSets:
+            with open(path, 'r') as f:
+                datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+        div_n = 0
+        for sampling in range(10):
+            reset_network(model, feed)
+            for n in range(75):
+                alias, dataset = random.choice(datasets)
+                feed.load(alias, dataset)
+                while next_network_cycle(model, feed):
+                    pass
+
+            labels = label_neurons(model)
+            div_n += len(labels)
+            print(len(labels))
+        div_n = div_n/10
+        print(f"{folder}: learn {time.time() - ts} s")
+        print(f"Diversity: {div_n}")
+
+        save_attention_maps(model, f"experiments_results/{folder}")
+
+        with open(f"experiments_results/{folder}/model.pkl", "wb") as f:
+            pickle.dump(model, f)
