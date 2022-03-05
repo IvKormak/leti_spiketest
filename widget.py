@@ -4,8 +4,8 @@ import pickle
 from pathlib import Path
 import sys
 
-from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QComboBox, QSpinBox, QFileDialog, QCheckBox, QVBoxLayout
-from PySide6.QtCore import QFile, QTimer, QDir
+from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QComboBox, QSpinBox, QFileDialog, QCheckBox, QVBoxLayout, QScrollArea, QGroupBox
+from PySide6.QtCore import QFile, QTimer, QDir, Qt
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtGui import QPixmap, QImage, qRgb
 
@@ -27,6 +27,11 @@ class Widget(QWidget):
         "radius":self.findChild(QSpinBox, "radius"),
         "speed":self.findChild(QSpinBox, "speed")
         }
+
+
+        self.chosenSets = []
+
+        self.db = cm.DBManager()
 
         self.statusbar = self.findChild(QLabel, "statusbar")
 
@@ -54,8 +59,21 @@ class Widget(QWidget):
 
         self.preview = self.findChild(QLabel, "preview")
         self.runLearning = self.findChild(QLabel, "trainResult")
-        self.listOfSets = self.findChild(QVBoxLayout, "listOfSets")
-        self.chosenSets = []
+        self.setsContainer = self.findChild(QVBoxLayout, "setsContainer")
+        self.setsLayout = QVBoxLayout()
+
+        self.loadTraces()
+
+        widget = QWidget()
+        widget.setLayout(self.setsLayout)
+
+        scroll = QScrollArea()
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(widget)
+
+        self.setsContainer.insertWidget(0, scroll)
 
         self.dataset = None
         self.network_conf = ""
@@ -63,9 +81,6 @@ class Widget(QWidget):
         self.renderComplete = False
         self.renderTimer = None
 
-        self.db = cm.DBManager()
-
-        self.loadTraces()
 
         self.path = QDir(os.fspath(Path(__file__).resolve().parent))
 
@@ -84,7 +99,7 @@ class Widget(QWidget):
             self.datasetCombo.addItem(trace.trace_alias, userData=trace.trace_path)
             button = QCheckBox(trace.trace_alias)
             button.stateChanged.connect(self.toggleDataSet(trace.trace_path))
-            self.listOfSets.insertWidget(0, button)
+            self.setsLayout.insertWidget(0, button)
 
     def _datasetDelete(self):
         self.db.delete_trace_entry(self.datasetCombo.currentData())
@@ -185,28 +200,44 @@ class Widget(QWidget):
     def _letsGo(self):
         if not self.network_conf:
             return
-        model, feed = main.construct_network("iter", self.network_conf)
-        
+
+        neuron_changes = {}
+        layer_changes = {}
+
+        model, training_pool, feed = main.construct_network("iter", self.network_conf, neuron_changes, layer_changes)
+
+        labels = {}
         datasets = []
-        for path in self.chosenSets:
-            with open(path, 'r') as f:
-                datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+        epoch_count = 0
+        learned_fully = False
 
-        for n in range(self.numOfSets.value()):
-            print(f"trace {n} of {self.numOfSets.value()}")
-            alias, set = random.choice(datasets)
-            feed.load(alias, set)
-            while main.next_network_cycle(model, feed):
-                pass
+        while not learned_fully or epoch_count < model.layer_parameters_set.terminate_on_epoch:
+            epoch_count += 1
+            for path in self.chosenSets:
+                with open(path, 'r') as f:
+                    datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
 
-        main.label_neurons(model)
+            for n in range(model.layer_parameters_set.epoch_length):
+                alias, dataset = random.choice(datasets)
+                feed.load(alias, dataset)
+                while main.next_training_cycle(training_pool, feed):
+                    pass
+
+            for donor_model in training_pool:
+                main.label_neurons(donor_model)
+
+            labels = main.fill_model_from_pool(model, training_pool)
+
+            learned_fully = len(labels) == len(self.chosenSets)
+
+        print(f"распознано: {len(labels)}, {labels}")
 
         folderToSave = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения файлов", "")
 
-        main.save_attention_maps(model, folderToSave)
+        main.save_attention_maps(model, f"experiments_results/{folderToSave}")
 
-        with open(f"{folderToSave}\\model.pkl", "wb") as f:
-                  pickle.dump(model, f)
+        with open(f"experiments_results/{folderToSave}/model.pkl", "wb") as f:
+            pickle.dump(model, f)
 
         del model, feed
 

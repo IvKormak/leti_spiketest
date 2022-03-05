@@ -96,8 +96,8 @@ if __name__ == "__main__":
                     while frame := model.next():
                         model.teacher.output = [1 if n == Defaults.files.index(trace) else 1j
                                                       for n in range(number_of_categories)]
-                    """for frame in model:
-                        model.teacher.output = [1 if n == Defaults.files.index(trace) else 1j
+                    """for frame in target_model:
+                        target_model.teacher.output = [1 if n == Defaults.files.index(trace) else 1j
                                                 for n in range(number_of_categories)]"""
                     tot += model.frame
 

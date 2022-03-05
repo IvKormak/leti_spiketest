@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 def recognize():
     weights = pickle.load(open('exp1638541627\\f.weights', 'rb'))
     model = init_model(model_options = {'learn': False, 'structure': [7,]})
-    #model.set_weights(weights)
+    #target_model.set_weights(weights)
     model.set_random_weights()
     model.feed.load('resources\\out.bin')
     [model.logger.add_watch(neuron, 'input_level') for neuron in model.layers[0].neurons]
