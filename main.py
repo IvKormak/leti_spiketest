@@ -135,7 +135,7 @@ class Neuron:
             self.input_level = 0
             self.model.state[self.output_address] = 1
             self.inhibited_by = self.t_spike + self.param_set.t_refrac
-            if self.learn:
+            if self.learn and self.age <= self.model.layer_parameters_set.epoch_length:
                 not_rotten = [k for k in self.ltp_times.keys() if
                               self.ltp_times[k] >= self.t_spike - self.param_set.t_ltp]
                 rest = [k for k in self.inputs if k not in not_rotten]
@@ -239,26 +239,29 @@ def load_network(model, feed_type, learn=False):
     return DataFeed(feed_type, model)
 
 
+def feed_events(model, events):
+    model.time = events[0].time
+    for ev in events:
+        model.state[ev.address] = 1
+
+    for layer in model.layers:
+        layer_update(model, layer)
+
+    for synapse in model.outputs:
+        if model.state[synapse]:
+            model.logs.append((synapse, feed.source))
+
+    model.state = {k: 0 for k in model.state.keys()}
+
+
 def next_training_cycle(training_pool, feed):
     next_ev = feed.next_events()
-    for donor_model in training_pool:
-        if feed.terminate:
+    if feed.terminate:
+        for donor_model in training_pool:
             for layer in donor_model.layers:
                 for neuron in layer['neurons']:
                     neuron.age += 1
-        else:
-            donor_model.time = next_ev[0].time
-            for ev in next_ev:
-                donor_model.state[ev.address] = 1
-
-            for layer in donor_model.layers:
-                layer_update(donor_model, layer)
-
-            for synapse in donor_model.outputs:
-                if donor_model.state[synapse]:
-                    donor_model.logs.append((synapse, feed.source))
-
-            donor_model.state = {k: 0 for k in donor_model.state.keys()}
+    [feed_events(donor_model, next_ev) for donor_model in training_pool]
     return not feed.terminate
 
 
@@ -276,8 +279,8 @@ def layer_update(model, layer):
 
 
 def label_neurons(donor_model):
-    neuron_journals = [l[0] for l in donor_model.logs[len(donor_model.logs)*8//10:]]
-    teacher_journals = [l[1] for l in donor_model.logs[len(donor_model.logs)*8//10:]]
+    neuron_journals = [l[0] for l in donor_model.logs[len(donor_model.logs)*6//10:]]
+    teacher_journals = [l[1] for l in donor_model.logs[len(donor_model.logs)*6//10:]]
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
 
@@ -292,42 +295,17 @@ def label_neurons(donor_model):
 
     R, C = np.array(R), np.array(C)
     F = np.matmul(R, C)
-    s_r = 0
-    s_i = 0
-    for f in F.flatten():
-        if np.real(f) > 0:
-            s_r += np.real(f)
-            s_i += np.imag(f)
-    trace_numbers = list(range(C.shape[1]))
-    neuron_numbers = list(range(R.shape[0]))
 
-    rename_dict = {}
+    rename_dict = {all_neurons[i]: os.path.basename(all_traces[np.where(r == r.max())[0][0]]) for i, r in enumerate(F)
+                   if np.real(r.max()) > np.imag(r.max())}
 
-    for neuron_number in neuron_numbers:
-        maximum_score_for_trace = 0
-        if len(trace_numbers) == 0:
-            break
-        trace_best_guessed = trace_numbers[0]
-        for trace_number in trace_numbers:
-            if np.real(F[neuron_number][trace_number]) > maximum_score_for_trace:
-                maximum_score_for_trace = F[neuron_number][trace_number]
-                trace_best_guessed = trace_number
-        rename_dict[all_neurons[neuron_number]] = os.path.basename(all_traces[trace_best_guessed])
-
-    countlabels = {}
+    countlabels = {val: list(rename_dict.values()).count(val) for val in rename_dict.values()}
 
     for neuron in donor_model.layers[-1]['neurons']:
         if neuron.output_address in rename_dict:
             neuron.label = rename_dict[neuron.output_address]
-        if neuron.label:
-            if neuron.age >= donor_model.layer_parameters_set.epoch_length:
-                neuron.learn = False
-            if not neuron.label in countlabels:
-                countlabels[neuron.label] = 0
-            countlabels[neuron.label] += 1
 
     donor_model.logs = []
-
     return countlabels
 
 
@@ -352,10 +330,8 @@ def fill_model_from_pool(model: Model, training_pool: [Model]):
     for i, layer in enumerate(model.layers):
         layers_pool = [m.layers[i]['neurons'] for m in training_pool]
         learnt = select_weights_from_pool(layers_pool, model.layer_parameters_set.execution_thres)
-        print(learnt.keys())
         already_there = set([neuron.label for neuron in layer['neurons'] if neuron.label])
         already_there_count = {k: [n.label for n in layer['neurons']].count(k) for k in already_there}
-        print(already_there_count)
 
         for k in already_there_count.keys():
             if k in learnt:
@@ -375,7 +351,6 @@ def fill_model_from_pool(model: Model, training_pool: [Model]):
 
         already_there = set([neuron.label for neuron in layer['neurons'] if neuron.label])
         already_there_count = {k: [n.label for n in layer['neurons']].count(k) for k in already_there}
-        print(already_there_count)
 
     return already_there_count
 
@@ -469,7 +444,6 @@ if __name__ == "__main__":
                 label_neurons(donor_model)
 
             labels = fill_model_from_pool(target_model, training_pool)
-            print(labels)
 
             learned_fully = len(labels) == len(chosenSets)
 
