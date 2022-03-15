@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass, field
 from collections import namedtuple
 import matplotlib.pyplot as plt
@@ -65,16 +66,20 @@ NeuronParametersSet = namedtuple("NeuronParametersSet", ["i_thres",
                                                          "activation_function"
                                                          ])
 
-LayerParametersSet = namedtuple("LayerParametersSet", ["inhibit_radius",
-                                                       "epoch_length",
-                                                       "execution_thres",
-                                                       "terminate_on_epoch"])
+GeneralParametersSet = namedtuple("GeneralParametersSet", ["inhibit_radius",
+                                                           "epoch_length",
+                                                           "execution_thres",
+                                                           "terminate_on_epoch",
+                                                           "pool_size",
+                                                           "wta",
+                                                           "false_positive_thres",
+                                                           "valuable_logs_part"])
 
 
 @dataclass
 class Model:
     neuron_parameters_set: NeuronParametersSet
-    layer_parameters_set: LayerParametersSet
+    general_parameters_set: GeneralParametersSet
     state: dict = field(default_factory=dict)
     outputs: list = field(default_factory=list)
     time: int = 0
@@ -135,7 +140,7 @@ class Neuron:
             self.input_level = 0
             self.model.state[self.output_address] = 1
             self.inhibited_by = self.t_spike + self.param_set.t_refrac
-            if self.learn and self.age <= self.model.layer_parameters_set.epoch_length:
+            if self.learn and self.age <= self.model.general_parameters_set.epoch_length:
                 not_rotten = [k for k in self.ltp_times.keys() if
                               self.ltp_times[k] >= self.t_spike - self.param_set.t_ltp]
                 rest = [k for k in self.inputs if k not in not_rotten]
@@ -183,12 +188,12 @@ class Neuron:
         return {i: random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min) for i in self.inputs}
 
 
-def construct_network(feed_type, source_file="network1.txt", learn=True, update_neuron_parameters={}, update_layer_parameters={}, pool_size=10):
+def construct_network(feed_type, source_file="network1.txt", learn=True, update_neuron_parameters={}, update_general_parameters={}):
     config = cm.ConfigParser()
     with open(source_file, 'r') as f:
         config.read_file(f)
     config["NEURON PARAMETERS"].update(update_neuron_parameters)
-    config["LAYER PARAMETERS"].update(update_layer_parameters)
+    config["GENERAL PARAMETERS"].update(update_general_parameters)
     nps = NeuronParametersSet(int(config["NEURON PARAMETERS"]["i_thres"]),
                               int(config["NEURON PARAMETERS"]["t_ltp"]),
                               int(config["NEURON PARAMETERS"]["t_refrac"]),
@@ -200,12 +205,16 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
                               int(config["NEURON PARAMETERS"]["a_dec"]),
                               int(config["NEURON PARAMETERS"]["a_inc"]),
                               config["NEURON PARAMETERS"]["activation_function"])
-    lps = LayerParametersSet(int(config["LAYER PARAMETERS"]["inhibit_radius"]),
-                             int(config["LAYER PARAMETERS"]["epoch_length"]),
-                             int(config["LAYER PARAMETERS"]["execution_thres"]),
-                             int(config["LAYER PARAMETERS"]["terminate_on_epoch"]))
-    model = Model(neuron_parameters_set=nps, layer_parameters_set=lps)
-    structure = config["LAYER PARAMETERS"]["structure"]
+    gps = GeneralParametersSet(int(config["GENERAL PARAMETERS"]["inhibit_radius"]),
+                               int(config["GENERAL PARAMETERS"]["epoch_length"]),
+                               int(config["GENERAL PARAMETERS"]["execution_thres"]),
+                               int(config["GENERAL PARAMETERS"]["terminate_on_epoch"]),
+                               int(config["GENERAL PARAMETERS"]["pool_size"]),
+                               int(config["GENERAL PARAMETERS"]["wta"]),
+                               float(config["GENERAL PARAMETERS"]["false_positive_thres"]),
+                               float(config["GENERAL PARAMETERS"]["valuable_logs_part"]))
+    model = Model(neuron_parameters_set=nps, general_parameters_set=gps)
+    structure = config["GENERAL PARAMETERS"]["structure"]
     if isinstance(structure, str):
         structure = [structure]
     layer = ""
@@ -218,11 +227,11 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
     model.outputs = config[layer]["outputs"].split(' ')
     model.state.update({s: 0 for s in model.outputs})
     training_pool = []
-    for _ in range(pool_size):
+    for _ in range(model.general_parameters_set.pool_size):
         t_model = Model(state=model.state.copy(),
                         outputs=model.outputs.copy(),
                         neuron_parameters_set=model.neuron_parameters_set,
-                        layer_parameters_set=model.layer_parameters_set,
+                        general_parameters_set=model.general_parameters_set,
                         )
         t_model.layers = [{'neurons': [n.copy(t_model) for n in l['neurons']], 'shape': l['shape']} for l in model.layers]
         training_pool.append(t_model)
@@ -271,16 +280,18 @@ def layer_update(model, layer):
     for row in range(layer["shape"][0]):
         for col in range(layer["shape"][1]):
             if layer["neurons"][row * layer["shape"][1] + col].output_level:
-                radius = model.layer_parameters_set.inhibit_radius
+                radius = model.general_parameters_set.inhibit_radius
                 for i in range(-radius, radius + 1):
                     for j in range(-radius + abs(i), radius - abs(i) + 1):
                         if layer["shape"][0] > row + i >= 0 and layer["shape"][1] > col + j >= 0:
                             layer["neurons"][(row + i) * layer["shape"][1] + col + j].inhibit()
+                            if model.general_parameters_set.wta:
+                                layer["neurons"][(row + i) * layer["shape"][1] + col + j].input_level = 0
 
 
 def label_neurons(donor_model):
-    neuron_journals = [l[0] for l in donor_model.logs[len(donor_model.logs)*6//10:]]
-    teacher_journals = [l[1] for l in donor_model.logs[len(donor_model.logs)*6//10:]]
+    neuron_journals = [l[0] for l in donor_model.logs[len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part:]]
+    teacher_journals = [l[1] for l in donor_model.logs[len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part:]]
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
 
@@ -297,7 +308,7 @@ def label_neurons(donor_model):
     F = np.matmul(R, C)
 
     rename_dict = {all_neurons[i]: os.path.basename(all_traces[np.where(r == r.max())[0][0]]) for i, r in enumerate(F)
-                   if np.real(r.max()) > np.imag(r.max())}
+                   if np.real(r.max()) > donor_model.general_parameters_set.false_positive_thres*np.imag(r.max())}
 
     countlabels = {val: list(rename_dict.values()).count(val) for val in rename_dict.values()}
 
@@ -314,26 +325,27 @@ def select_weights_from_pool(layers_pool, dup_thres):
     neuron_pool = np.array(layers_pool).flatten()
     for n in neuron_pool:
         if n.label:
-            if n.label not in learnt_categories:
-                learnt_categories[n.label] = {}
-                learnt_categories[n.label]['weights'] = [n.weights,]
-                learnt_categories[n.label]['count'] = 1
             if n.label in learnt_categories:
                 if learnt_categories[n.label]['count'] < dup_thres:
+                    learnt_categories[n.label]['ids'].append(id(n))
                     learnt_categories[n.label]['weights'].append(n.weights)
                     learnt_categories[n.label]['count'] += 1
+            else:
+                learnt_categories[n.label] = {}
+                learnt_categories[n.label]['ids'] = [id(n), ]
+                learnt_categories[n.label]['weights'] = [n.weights,]
+                learnt_categories[n.label]['count'] = 1
     return learnt_categories
 
 
 def fill_model_from_pool(model: Model, training_pool: [Model]):
-    filled_positions = []
     for i, layer in enumerate(model.layers):
         layers_pool = [m.layers[i]['neurons'] for m in training_pool]
-        learnt = select_weights_from_pool(layers_pool, model.layer_parameters_set.execution_thres)
+        learnt = select_weights_from_pool(layers_pool, model.general_parameters_set.execution_thres)
         already_there = set([neuron.label for neuron in layer['neurons'] if neuron.label])
         already_there_count = {k: [n.label for n in layer['neurons']].count(k) for k in already_there}
 
-        for k in already_there_count.keys():
+        for k in already_there:
             if k in learnt:
                 learnt[k]['count'] -= already_there_count[k]
 
@@ -358,7 +370,7 @@ def fill_model_from_pool(model: Model, training_pool: [Model]):
 def delete_duplicate_neurons(model, countlabels):
     for neuron in model.layers[-1]['neurons']:
         if neuron.label:
-            if countlabels[neuron.label] > model.layer_parameters_set.execution_thres:
+            if countlabels[neuron.label] > model.general_parameters_set.execution_thres:
                 countlabels[neuron.label] -= 1
                 neuron.reset()
                 neuron.learn = True
@@ -409,12 +421,11 @@ if __name__ == "__main__":
     sets500 = ["traces/b-t-500.bin", "traces/l-r-500.bin", "traces/r-l-500.bin", "traces/t-b-500.bin",
                "traces/bl-tr-500.bin", "traces/tl-br-500.bin", "traces/br-tl-500.bin", "traces/tr-bl-500.bin"]
 
-    sweep = [("resources/models/network2_c.txt", "fukk")]*1
-
+    sweep = [("resources/models/network3_c.txt", "fukk3")]*1
+    t = time.time()
     for file, folder in sweep:
         target_model, training_pool, feed = construct_network("iter", file,
-                                                              update_neuron_parameters={'epoch_length': '50'},
-                                                              pool_size=5)
+                                                              update_neuron_parameters={'epoch_length': '50'})
         chosenSets = sets500
         labels = {}
         datasets = []
@@ -427,14 +438,14 @@ if __name__ == "__main__":
 
         reset(target_model, feed)
 
-        while not learned_fully or epoch_count < target_model.layer_parameters_set.terminate_on_epoch:
+        while not learned_fully or epoch_count < target_model.general_parameters_set.terminate_on_epoch:
             [reset(donor_model, feed) for donor_model in training_pool]
             epoch_count += 1
             for path in chosenSets:
                 with open(path, 'r') as f:
                     datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
 
-            for n in range(target_model.layer_parameters_set.epoch_length):
+            for n in range(target_model.general_parameters_set.epoch_length):
                 alias, dataset = random.choice(datasets)
                 feed.load(alias, dataset)
                 while next_training_cycle(training_pool, feed):
@@ -447,6 +458,5 @@ if __name__ == "__main__":
 
             learned_fully = len(labels) == len(chosenSets)
 
-        print(f"распознано: {len(labels)}, {labels}")
-
+        print(f"end time: {time.time()-t}, {epoch_count} epochs")
         save_attention_maps(target_model, f"experiments_results/{folder}")

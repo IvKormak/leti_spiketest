@@ -211,13 +211,13 @@ class Widget(QWidget):
         epoch_count = 0
         learned_fully = False
 
-        while not learned_fully or epoch_count < model.layer_parameters_set.terminate_on_epoch:
+        while not learned_fully or epoch_count < model.general_parameters_set.terminate_on_epoch:
             epoch_count += 1
             for path in self.chosenSets:
                 with open(path, 'r') as f:
                     datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
 
-            for n in range(model.layer_parameters_set.epoch_length):
+            for n in range(model.general_parameters_set.epoch_length):
                 alias, dataset = random.choice(datasets)
                 feed.load(alias, dataset)
                 while main.next_training_cycle(training_pool, feed):
