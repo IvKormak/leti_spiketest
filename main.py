@@ -236,14 +236,12 @@ def load_network(source):
 
 def next_training_cycle(donor_model, feed):
     next_ev = feed.next_events()
-    print(next_ev)
     if feed.terminate:
         for layer in donor_model.layers:
             for neuron in layer['neurons']:
                 neuron.age += 1
     feed_events(donor_model, feed.source, next_ev)
     return not feed.terminate
-
 
 
 def feed_events(model, source, events):
@@ -254,11 +252,9 @@ def feed_events(model, source, events):
     for layer in model.layers:
         layer_update(model, layer)
 
-    print(model.outputs)
     for synapse in model.outputs:
         if model.state[synapse]:
             model.logs.append((synapse, source))
-            print(synapse)
     model.state = {k: 0 for k in model.state.keys()}
 
 def layer_update(model, layer):

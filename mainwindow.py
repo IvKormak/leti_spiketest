@@ -356,10 +356,8 @@ class TrainerWorker(QObject):
             alias, dataset = random.choice(datasets)
             self.feed.load(alias, dataset)
             print(f"current dataset {alias}")
-            while True:
-                print(model.time)
-                t = main.next_training_cycle(self.model, self.feed)
-                print(model.time)
+            while main.next_training_cycle(self.model, self.feed):
+                print(self.model.time)
                 pass
             print("dataset finished")
 
