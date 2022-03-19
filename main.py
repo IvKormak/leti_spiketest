@@ -1,7 +1,9 @@
+import pickle
 import time
 from dataclasses import dataclass, field
 from collections import namedtuple
 import matplotlib.pyplot as plt
+import numpy
 import numpy as np
 import configparser as cm
 import AERGen as ag
@@ -70,7 +72,6 @@ GeneralParametersSet = namedtuple("GeneralParametersSet", ["inhibit_radius",
                                                            "epoch_length",
                                                            "execution_thres",
                                                            "terminate_on_epoch",
-                                                           "pool_size",
                                                            "wta",
                                                            "false_positive_thres",
                                                            "valuable_logs_part"])
@@ -209,7 +210,6 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
                                int(config["GENERAL PARAMETERS"]["epoch_length"]),
                                int(config["GENERAL PARAMETERS"]["execution_thres"]),
                                int(config["GENERAL PARAMETERS"]["terminate_on_epoch"]),
-                               int(config["GENERAL PARAMETERS"]["pool_size"]),
                                int(config["GENERAL PARAMETERS"]["wta"]),
                                float(config["GENERAL PARAMETERS"]["false_positive_thres"]),
                                float(config["GENERAL PARAMETERS"]["valuable_logs_part"]))
@@ -226,29 +226,27 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
                                  'shape': [int(s) for s in config[layer]["shape"].split(' ')]})
     model.outputs = config[layer]["outputs"].split(' ')
     model.state.update({s: 0 for s in model.outputs})
-    training_pool = []
-    for _ in range(model.general_parameters_set.pool_size):
-        t_model = Model(state=model.state.copy(),
-                        outputs=model.outputs.copy(),
-                        neuron_parameters_set=model.neuron_parameters_set,
-                        general_parameters_set=model.general_parameters_set,
-                        )
-        t_model.layers = [{'neurons': [n.copy(t_model) for n in l['neurons']], 'shape': l['shape']} for l in model.layers]
-        training_pool.append(t_model)
-    return model, training_pool, DataFeed(feed_type, model)
+    return model, DataFeed(feed_type, model)
 
 
-def load_network(model, feed_type, learn=False):
-    model.time = 0
-    model.state = {s: 0 for s in model.state}
-    model.logs = []
-    for layer in model.layers:
-        for neuron in layer['neurons']:
-            neuron.learn = learn
-    return DataFeed(feed_type, model)
+def load_network(source):
+    with open(source, "rb") as f:
+        return pickle.load(f)
 
 
-def feed_events(model, events):
+def next_training_cycle(donor_model, feed):
+    next_ev = feed.next_events()
+    print(next_ev)
+    if feed.terminate:
+        for layer in donor_model.layers:
+            for neuron in layer['neurons']:
+                neuron.age += 1
+    feed_events(donor_model, feed.source, next_ev)
+    return not feed.terminate
+
+
+
+def feed_events(model, source, events):
     model.time = events[0].time
     for ev in events:
         model.state[ev.address] = 1
@@ -256,23 +254,12 @@ def feed_events(model, events):
     for layer in model.layers:
         layer_update(model, layer)
 
+    print(model.outputs)
     for synapse in model.outputs:
         if model.state[synapse]:
-            model.logs.append((synapse, feed.source))
-
+            model.logs.append((synapse, source))
+            print(synapse)
     model.state = {k: 0 for k in model.state.keys()}
-
-
-def next_training_cycle(training_pool, feed):
-    next_ev = feed.next_events()
-    if feed.terminate:
-        for donor_model in training_pool:
-            for layer in donor_model.layers:
-                for neuron in layer['neurons']:
-                    neuron.age += 1
-    [feed_events(donor_model, next_ev) for donor_model in training_pool]
-    return not feed.terminate
-
 
 def layer_update(model, layer):
     [neuron.update() for neuron in layer["neurons"]]
@@ -376,6 +363,18 @@ def delete_duplicate_neurons(model, countlabels):
                 neuron.learn = True
 
 
+def glue_attention_maps(model):
+    res = np.ndarray([0, 0])
+    for y in range(model.layers[-1]['shape'][1]):
+        row = np.ndarray([0, 0])
+        for x in range(model.layers[-1]['shape'][0]):
+            row = np.concatenate(row, model.layers[-1]['neurons'][y*model.layers[-1]['shape'][0]+x].attention_map())
+        res = np.concatenate(res, row)
+    plt.close()
+    plt.imshow(res)
+    plt.show()
+    return res
+
 def save_attention_maps(model, folder: str):
     attention_maps = []
     if not os.path.exists(folder):
@@ -424,8 +423,7 @@ if __name__ == "__main__":
     sweep = [("resources/models/network3_c.txt", "fukk3")]*1
     t = time.time()
     for file, folder in sweep:
-        target_model, training_pool, feed = construct_network("iter", file,
-                                                              update_neuron_parameters={'epoch_length': '50'})
+        target_model, feed = construct_network("iter", file, update_neuron_parameters={'epoch_length': '50'})
         chosenSets = sets500
         labels = {}
         datasets = []

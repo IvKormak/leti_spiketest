@@ -118,11 +118,11 @@
     <valuelist type="QVariantList" key="CustomOutputParsers"/>
     <value type="int" key="PE.EnvironmentAspect.Base">2</value>
     <valuelist type="QVariantList" key="PE.EnvironmentAspect.Changes"/>
-    <value type="QString" key="ProjectExplorer.ProjectConfiguration.DisplayName">D:/Кормак/Documents/NeurGUI/widget.py</value>
-    <value type="QString" key="ProjectExplorer.ProjectConfiguration.Id">PythonEditor.RunConfiguration.D:/Кормак/Documents/NeurGUI/widget.py</value>
-    <value type="QString" key="ProjectExplorer.RunConfiguration.BuildKey">D:/Кормак/Documents/NeurGUI/widget.py</value>
+    <value type="QString" key="ProjectExplorer.ProjectConfiguration.DisplayName">D:/Кормак/Documents/NeurGUI/mainwindow.py</value>
+    <value type="QString" key="ProjectExplorer.ProjectConfiguration.Id">PythonEditor.RunConfiguration.D:/Кормак/Documents/NeurGUI/mainwindow.py</value>
+    <value type="QString" key="ProjectExplorer.RunConfiguration.BuildKey">D:/Кормак/Documents/NeurGUI/mainwindow.py</value>
     <value type="QString" key="PythonEditor.RunConfiguation.Interpreter">{6ae66ce1-c746-4fc2-a776-e995792ae18b}</value>
-    <value type="QString" key="PythonEditor.RunConfiguation.Script">D:\Кормак\Documents\NeurGUI\widget.py</value>
+    <value type="QString" key="PythonEditor.RunConfiguation.Script">D:\Кормак\Documents\NeurGUI\mainwindow.py</value>
     <value type="bool" key="RunConfiguration.UseCppDebugger">false</value>
     <value type="bool" key="RunConfiguration.UseCppDebuggerAuto">true</value>
     <value type="bool" key="RunConfiguration.UseQmlDebugger">false</value>
