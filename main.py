@@ -273,8 +273,8 @@ def layer_update(model, layer):
 
 
 def label_neurons(donor_model):
-    neuron_journals = [l[0] for l in donor_model.logs[len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part:]]
-    teacher_journals = [l[1] for l in donor_model.logs[len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part:]]
+    neuron_journals = [l[0] for l in donor_model.logs[int(len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part):]]
+    teacher_journals = [l[1] for l in donor_model.logs[int(len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part):]]
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
 
@@ -359,17 +359,17 @@ def delete_duplicate_neurons(model, countlabels):
                 neuron.learn = True
 
 
-def glue_attention_maps(model):
-    res = np.ndarray([0, 0])
+def glue_attention_maps(model, folder):
+    res = np.ndarray([28*model.layers[-1]['shape'][0], 0])
     for y in range(model.layers[-1]['shape'][1]):
-        row = np.ndarray([0, 0])
+        row = np.ndarray([0, 28])
         for x in range(model.layers[-1]['shape'][0]):
-            row = np.concatenate(row, model.layers[-1]['neurons'][y*model.layers[-1]['shape'][0]+x].attention_map())
-        res = np.concatenate(res, row)
+            synapse, label, map = model.layers[-1]['neurons'][y*model.layers[-1]['shape'][0]+x].attention_map()
+            row = np.concatenate((row, map))
+        res = np.concatenate((res, row), axis=1)
     plt.close()
     plt.imshow(res)
-    plt.show()
-    return res
+    plt.savefig(f"{folder}/attention_maps.png")
 
 def save_attention_maps(model, folder: str):
     attention_maps = []

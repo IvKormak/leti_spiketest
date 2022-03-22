@@ -3,6 +3,7 @@ import os
 import pickle
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -62,7 +63,6 @@ class MainWindow(QWidget):
         self.donorModels = []
         self.letsGo = self.findChild(QPushButton, "letsGo")
         self.letsGo.clicked.connect(self._letsGo)
-        #self.letsGo.clicked.connect(self.testt)
         self.trainResult = self.findChild(QLabel, "trainResult")
 
         self.preview = self.findChild(QLabel, "preview")
@@ -224,6 +224,7 @@ class MainWindow(QWidget):
 
     # noinspection PyUnresolvedReferences
     def _letsGo(self):
+        self.timestart = time.time()
         if not self.network_conf:
             self.setStatus("Конфигурация не выбрана!")
             return
@@ -260,73 +261,31 @@ class MainWindow(QWidget):
 
     # noinspection PyUnresolvedReferences
     def _trainingFinished(self, donor_model):
-        print("training finished")
         self.donorModels.append(donor_model)
         self._poolSize -= 1
         self.setStatus(f"Обучение сети {self.poolSize.value() - self._poolSize} из {self.poolSize.value()} закончено")
         if not self._poolSize:
             labels = main.fill_model_from_pool(self.target_model, self.donorModels)
+            print(labels, self.chosenSets)
             if len(labels) == len(self.chosenSets):
                 self.endTraining.emit()
+                print(time.time() - self.timestart)
                 folderToSave = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения файлов", "")
-                main.save_attention_maps(self.target_model, f"experiments_results/{folderToSave}")
+                main.save_attention_maps(self.target_model, folderToSave)
 
-                with open(f"experiments_results/{folderToSave}/model.pkl", "wb") as f:
+                with open(f"{folderToSave}/model.pkl", "wb") as f:
                     pickle.dump(self.target_model, f)
 
-                glued_maps = main.glue_attention_maps(self.target_model)
-                img = QImage(glued_maps, glued_maps.shape[1], glued_maps.shape[0], glued_maps.shape[1],
-                             QImage.Format_Indexed8)
-                img.setColorTable(self.colortable)
+                main.glue_attention_maps(self.target_model, folderToSave)
+                img = QImage(f"{folderToSave}/attention_maps.png")
                 pixmap = QPixmap(img).scaledToHeight(300)
 
                 self.trainResult.setPixmap(pixmap)
                 self.letsGo.setEnabled(True)
             else:
                 self._poolSize = self.poolSize.value()
-                self.startTraining.emit()
+                self.startTraining.emit(self.chosenSets)
                 self.setStatus('Начинаем обучение заново')
-
-    def testt(self):
-        if not self.network_conf:
-            self.setStatus("Конфигурация не выбрана!")
-            return
-        self.letsGo.setEnabled(False)
-        self._poolSize = self.poolSize.value()
-        neuron_changes = {}
-        general_changes = {"pool_size": str(self._poolSize)}
-        self.target_model, feed = main.construct_network(feed_type="iter",
-                                                         source_file=self.network_conf,
-                                                         learn=False,
-                                                         update_neuron_parameters=neuron_changes,
-                                                         update_general_parameters=general_changes)
-
-        print("training started")
-        main.reset(self.target_model, feed)
-        datasets = []
-        epoch_count = 0
-
-        main.reset(self.target_model, feed)
-        print("model reset")
-        epoch_count += 1
-        print(f"epoch {epoch_count}")
-        for path in self.chosenSets:
-            with open(path, 'r') as f:
-                datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
-
-        for n in range(self.target_model.general_parameters_set.epoch_length):
-            alias, dataset = random.choice(datasets)
-            feed.load(alias, dataset)
-            print(f"current dataset {alias}")
-            while main.next_training_cycle(self.target_model, feed):
-                print(self.target_model.time)
-                pass
-            print("dataset finished")
-
-        print(main.label_neurons(self.target_model))
-
-
-        self.setStatus('Начинаем обучение')
 
 
 
@@ -339,15 +298,12 @@ class TrainerWorker(QObject):
 
     # noinspection PyUnresolvedReferences
     def train(self, chosenSets):
-        print("training started")
         main.reset(self.model, self.feed)
         datasets = []
         epoch_count = 0
 
         main.reset(self.model, self.feed)
-        print("model reset")
         epoch_count += 1
-        print(f"epoch {epoch_count}")
         for path in chosenSets:
             with open(path, 'r') as f:
                 datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
@@ -355,13 +311,10 @@ class TrainerWorker(QObject):
         for n in range(self.model.general_parameters_set.epoch_length):
             alias, dataset = random.choice(datasets)
             self.feed.load(alias, dataset)
-            print(f"current dataset {alias}")
             while main.next_training_cycle(self.model, self.feed):
-                print(self.model.time)
                 pass
-            print("dataset finished")
 
-        print(main.label_neurons(self.model))
+        main.label_neurons(self.model)
 
         self.done.emit(self.model)
 
