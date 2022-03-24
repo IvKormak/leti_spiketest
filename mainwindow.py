@@ -11,7 +11,7 @@ from PySide6.QtCore import QFile, QTimer, QDir, Qt, QObject, QThread, Signal
 from PySide6.QtGui import QPixmap, QImage, qRgb
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import QApplication, QWidget, QPushButton, QLabel, QComboBox, QSpinBox, QFileDialog, QCheckBox, \
-    QVBoxLayout, QScrollArea
+    QVBoxLayout, QScrollArea, QSpacerItem
 
 import AERGen as ag
 import configmanager as cm
@@ -33,7 +33,12 @@ class MainWindow(QWidget):
             "speed": self.findChild(QSpinBox, "speed")
         }
 
+        self.path = QDir(os.fspath(Path(__file__).resolve().parent))
+
+
         self.chosenSets = []
+        self.chosenReconSets = []
+        self.chosenToRemoveSets = []
 
         self.db = cm.DBManager()
 
@@ -70,6 +75,20 @@ class MainWindow(QWidget):
         self.setsContainer = self.findChild(QVBoxLayout, "setsContainer")
         self.setsLayout = QVBoxLayout()
 
+        self.chooseModel = self.findChild(QPushButton, "chooseModel")
+        self.chooseModel.clicked.connect(self._chooseModel)
+        self.deleteSets = self.findChild(QPushButton, "deleteSets")
+        self.reconSetsLayout = QVBoxLayout()
+        self.reconSetsContainer = self.findChild(QVBoxLayout, "reconSetsContainer")
+        self.reconSetsInnerContainer = QScrollArea()
+        self.reconSetsContainer.insertWidget(0, self.reconSetsInnerContainer)
+        self.deleteSets.clicked.connect(self._deleteSets)
+        self.addSet = self.findChild(QPushButton, "addSet")
+        self.addSet.clicked.connect(self._addSet)
+        self.datasetCombo_2 = self.findChild(QComboBox, "datasetCombo_2")
+        self.answers = self.findChild(QScrollArea, "answers")
+        self.recon = self.findChild(QLabel, "recon")
+
         self.loadTraces()
 
         widget = QWidget()
@@ -90,9 +109,6 @@ class MainWindow(QWidget):
         self.renderTimer = None
 
         self.colortable = [qRgb(i, i, i) for i in range(256)]
-
-        self.path = QDir(os.fspath(Path(__file__).resolve().parent))
-
     def load_ui(self):
         loader = QUiLoader()
         path = os.fspath(Path(__file__).resolve().parent / "form.ui")
@@ -108,24 +124,65 @@ class MainWindow(QWidget):
     def loadTraces(self):
         self.setStatus('Начинаем загрузку')
         self.datasetCombo.clear()
+        self.datasetCombo_2.clear()
         traces = self.db.read_trace_entries()
         for trace in traces:
             self.datasetCombo.addItem(trace.trace_alias, userData=trace.trace_path)
+            self.datasetCombo_2.addItem(trace.trace_alias, userData=trace.trace_path)
             button = QCheckBox(trace.trace_alias)
-            button.stateChanged.connect(self.toggleDataSet(trace.trace_path))
+            button.stateChanged.connect(self.toggleDataSet(trace.trace_path, self.chosenSets))
             self.setsLayout.insertWidget(0, button)
+        self.setsLayout.addStretch()
         self.setStatus('Готово')
+
+    def _addSet(self):
+        self.chosenReconSets.append(self.db.get_trace_by_path(self.datasetCombo_2.currentData()))
+        self.renderReconSets()
+
+    def _deleteSets(self):
+        self.chosenReconSets = [i for i in self.chosenReconSets if i.trace_path not in self.chosenToRemoveSets]
+        self.renderReconSets()
+
+    def _chooseModel(self):
+        with open(self.path.relativeFilePath(
+                QFileDialog.getOpenFileName(self, "Выберите файл с обученной моделью", "")[0]), "rb") as f:
+            self.model_file = pickle.load(f)
+
+    def fillLabels(self):
+        pass
+
+    def renderReconSets(self):
+        self.reconSetsContainer.removeWidget(self.reconSetsInnerContainer)
+        self.reconSetsLayout = QVBoxLayout()
+
+        for trace in self.chosenReconSets:
+            button = QCheckBox(trace.trace_alias)
+            button.stateChanged.connect(self.toggleDataSet(trace.trace_path, self.chosenToRemoveSets))
+            self.reconSetsLayout.insertWidget(0, button)
+        self.reconSetsLayout.addStretch()
+
+        widget = QWidget()
+        widget.setLayout(self.reconSetsLayout)
+
+        self.reconSetsInnerContainer = QScrollArea()
+        self.reconSetsInnerContainer.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+        self.reconSetsInnerContainer.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.reconSetsInnerContainer.setWidgetResizable(True)
+        self.reconSetsInnerContainer.setWidget(widget)
+
+        self.reconSetsContainer.insertWidget(0, self.reconSetsInnerContainer)
+
 
     def _datasetDelete(self):
         self.db.delete_trace_entry(self.datasetCombo.currentData())
         self.loadTraces()
 
-    def toggleDataSet(self, alias):
+    def toggleDataSet(self, alias, variable):
         def _(state):
             if not state:
-                self.chosenSets.remove(alias)
+               variable.remove(alias)
             else:
-                self.chosenSets.append(alias)
+                variable.append(alias)
 
         return _
 
@@ -328,36 +385,10 @@ class ReckognizerWorker(QObject):
 
     # noinspection PyUnresolvedReferences
     def reckognize(self, events):
-        self.model.time = events[0].time
-        for ev in events:
-            self.model.state[ev.address] = 1
-
-        for layer in self.model.layers:
-            main.layer_update(self.model, layer)
-
-        for synapse in self.model.outputs:
-            if self.model.state[synapse]:
-                label = [n.label for n in self.model.layers[-1]["neurons"] if n.output == synapse][0]
-                self.reckon.emit(label)
-
-    def reckonloop(self, feed_type, source):
-        feed = main.DataFeed(feed_type, self.model)
-        feed.load(source)
-        while not feed.terminate:
-            self.reckognize(feed.next_events())
+        pass
 
 
 if __name__ == "__main__":
-    sys._excepthook = sys.excepthook
-
-
-    def exception_hook(exctype, value, traceback):
-        print(exctype, value, traceback)
-        sys._excepthook(exctype, value, traceback)
-        sys.exit(1)
-
-
-    sys.excepthook = exception_hook
 
     app = QApplication([])
     main_window = MainWindow()
