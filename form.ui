@@ -23,7 +23,7 @@
     </rect>
    </property>
    <property name="currentIndex">
-    <number>2</number>
+    <number>0</number>
    </property>
    <widget class="QWidget" name="tab">
     <attribute name="title">
@@ -429,10 +429,10 @@
              <number>10009</number>
             </property>
             <property name="singleStep">
-             <number>1</number>
+             <number>10</number>
             </property>
             <property name="value">
-             <number>200</number>
+             <number>50</number>
             </property>
            </widget>
           </item>
@@ -447,6 +447,9 @@
            <widget class="QSpinBox" name="poolSize">
             <property name="minimum">
              <number>1</number>
+            </property>
+            <property name="value">
+             <number>10</number>
             </property>
            </widget>
           </item>

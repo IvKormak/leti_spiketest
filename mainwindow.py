@@ -327,6 +327,7 @@ class MainWindow(QWidget):
     def _chooseConf(self):
         self.network_conf = self.path.relativeFilePath(
             QFileDialog.getOpenFileName(self, "Выберите файл с конфигурацией модели", "")[0])
+        self.letsGo.setEnabled(True)
 
     def _letsGo(self):
         self.timestart = time.time()
@@ -335,8 +336,10 @@ class MainWindow(QWidget):
             return
         self.letsGo.setEnabled(False)
         self._poolSize = self.poolSize.value()
+        self.tracestogo = self._poolSize*len(self.chosenSets)*self.numOfSets.value()
+        self.tracesdone = 0
         neuron_changes = {}
-        general_changes = {"pool_size": str(self._poolSize)}
+        general_changes = {"pool_size": str(self._poolSize), "epoch_length": str(self.numOfSets.value())}
         self.target_model, feed = main.construct_network(feed_type="iter",
                                                          source_file=self.network_conf,
                                                          learn=False,
@@ -356,13 +359,17 @@ class MainWindow(QWidget):
             trainer.moveToThread(thread)
             self.startTraining.connect(trainer.train)
             trainer.done.connect(self._trainingFinished)
+            trainer.trace_finished.connect(self.countProgress)
             self.endTraining.connect(thread.quit)
-
             self.threads.append(thread)
             self.trainers.append(trainer)
 
         self.startTraining.emit(self.chosenSets)
         self.setStatus('Начинаем обучение')
+
+    def countProgress(self):
+        self.tracesdone += 1
+        self.setStatus(f"Завершено {np.around(self.tracesdone/self.tracestogo*100, decimals=2)}%")
 
     def _trainingFinished(self, donor_model):
         self.donorModels.append(donor_model)
@@ -370,10 +377,9 @@ class MainWindow(QWidget):
         self.setStatus(f"Обучение сети {self.poolSize.value() - self._poolSize} из {self.poolSize.value()} закончено")
         if not self._poolSize:
             labels = main.fill_model_from_pool(self.target_model, self.donorModels)
-            print(labels, self.chosenSets)
             if len(labels) == len(self.chosenSets):
                 self.endTraining.emit()
-                print(time.time() - self.timestart)
+                self.setStatus(f"Времени затрачено: {time.time() - self.timestart}")
                 folderToSave = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения файлов", "")
                 main.save_attention_maps(self.target_model, folderToSave)
 
@@ -400,6 +406,7 @@ class MainWindow(QWidget):
 
 class TrainerWorker(QObject):
     done = Signal(main.Model)
+    trace_finished = Signal()
 
     def __init__(self, **kwargs):
         self.model, self.feed = main.construct_network(**kwargs)
@@ -409,7 +416,6 @@ class TrainerWorker(QObject):
         main.reset(self.model, self.feed)
         datasets = []
         epoch_count = 0
-
         main.reset(self.model, self.feed)
         epoch_count += 1
         for path in chosenSets:
@@ -421,6 +427,7 @@ class TrainerWorker(QObject):
             self.feed.load(alias, dataset)
             while main.next_training_cycle(self.model, self.feed):
                 pass
+            self.trace_finished.emit()
 
         main.label_neurons(self.model)
 

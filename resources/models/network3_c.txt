@@ -11,7 +11,7 @@ w_random = 0.7
 a_dec = 60
 a_inc = 70
 activation_function = DeltaFunction
-
+mask = none
 [GENERAL PARAMETERS]
 inhibit_radius = 2
 epoch_length = 50

@@ -98,8 +98,15 @@ class Neuron:
         self.learn = learn
         self.inputs = inputs
         self.weights = self.random_weights() if weights is None else weights
-        self.weights_mask = {k: self.param_set.w_max for k in self.weights.keys()} if weights is None else mask*self.param_set.w_max
+        self.weights_mask = {}
+        if mask is not None:
+            for x, row in enumerate(mask):
+                for y, el in enumerate(row):
+                    self.weights_mask[f"{format(x, '02x')}{format(y, '02x')}0"] = el*self.param_set.w_max
+                    self.weights_mask[f"{format(x, '02x')}{format(y, '02x')}8"] = el*self.param_set.w_max
 
+        else:
+            self.weights_mask = {k: self.param_set.w_max for k in self.weights.keys()}
         self.input_level = 0
         self.output_level = 0
         self.t_last_spike = -1
@@ -192,7 +199,7 @@ class Neuron:
         return {i: random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min) for i in self.inputs}
 
 
-def construct_network(feed_type, source_file="network1.txt", learn=True, update_neuron_parameters={}, update_general_parameters={}):
+def construct_network(feed_type, source_file, learn=True, update_neuron_parameters={}, update_general_parameters={}):
     config = cm.ConfigParser()
     with open(source_file, 'r') as f:
         config.read_file(f)
@@ -217,7 +224,10 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
                                float(config["GENERAL PARAMETERS"]["false_positive_thres"]),
                                float(config["GENERAL PARAMETERS"]["valuable_logs_part"]))
     model = Model(neuron_parameters_set=nps, general_parameters_set=gps)
-    mask = load_mask(config["NEURON PARAMETERS"]["mask"])
+    if config["NEURON PARAMETERS"]["mask"] != "none":
+        mask = load_mask(config["NEURON PARAMETERS"]["mask"])
+    else:
+        mask = None
     structure = config["GENERAL PARAMETERS"]["structure"]
     if isinstance(structure, str):
         structure = [structure]
@@ -225,7 +235,7 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
     for layer in structure:
         model.state.update({s: 0 for s in config[layer]["inputs"].split(' ')})
         if config[layer]["type"] == "perceptron_layer":
-            model.layers.append({'neurons': [Neuron(model, output, config[layer]["inputs"].split(' '), learn)
+            model.layers.append({'neurons': [Neuron(model, output, config[layer]["inputs"].split(' '), learn, mask=mask)
                                              for output in config[layer]["outputs"].split(' ')],
                                  'shape': [int(s) for s in config[layer]["shape"].split(' ')]})
     model.outputs = config[layer]["outputs"].split(' ')
@@ -233,7 +243,9 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
     return model, DataFeed(feed_type, model)
 
 def load_mask(source):
-    return np.around(np.divide(cv2.cvtColor(cv2.imread(source), cv2.COLOR_BGR2GRAY), 255.0), decimals=3)
+    im = cv2.imread(source)
+    bw = cv2.cvtColor(im , cv2.COLOR_BGR2GRAY)
+    return np.around(np.divide(bw, 255.0), decimals=3)
 
 def load_network(source):
     with open(source, "rb") as f:
