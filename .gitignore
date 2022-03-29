@@ -33,7 +33,7 @@ Makefile*
 moc_*.cpp
 ui_*.h
 qrc_*.cpp
-Thumbs.db
+*.db
 *.res
 *.rc
 /.qmake.cache
