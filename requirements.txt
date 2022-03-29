@@ -3,3 +3,4 @@ matplotlib
 imageio
 PyQt6
 PySide6
+opencv-python

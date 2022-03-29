@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass, field
 from collections import namedtuple
 import matplotlib.pyplot as plt
-import numpy
+import cv2
 import numpy as np
 import configparser as cm
 import AERGen as ag
@@ -29,12 +29,13 @@ class DataFeed:
         if self.feed_type == "stream":
             self.connect_stream()
 
-    def next_events(self):
+    def next_events(self, peek=False):
         events = []
         if self.feed_type == "iter":
             if len(self.buf) == 1:
-                self.terminate = True
-                self.time_offset += self.buf[0].time
+                if not peek:
+                    self.terminate = True
+                    self.time_offset += self.buf[0].time
                 return self.buf
             time = self.buf[0].time
             i = 0
@@ -43,7 +44,8 @@ class DataFeed:
                 if ev.time > time:
                     break
                 events.append(ag.Event(ev.address, ev.position, ev.polarity, time + self.time_offset))
-            self.buf = self.buf[i:]
+            if not peek:
+                self.buf = self.buf[i:]
             return events
         if self.feed_type == "stream":
             events = self.await_event()
@@ -89,13 +91,14 @@ class Model:
 
 
 class Neuron:
-    def __init__(self, model, output_address, inputs, learn=True, weights=None):
+    def __init__(self, model, output_address, inputs, learn=True, weights=None, mask=None):
         self.model = model
         self.param_set = model.neuron_parameters_set
         self.output_address = output_address
         self.learn = learn
         self.inputs = inputs
-        self.weights = self.random_weights() if not weights else weights
+        self.weights = self.random_weights() if weights is None else weights
+        self.weights_mask = {k: self.param_set.w_max for k in self.weights.keys()} if weights is None else mask*self.param_set.w_max
 
         self.input_level = 0
         self.output_level = 0
@@ -137,7 +140,6 @@ class Neuron:
             self.times_fired += 1
 
             min_level = self.param_set.w_min
-            max_level = self.param_set.w_max
             self.input_level = 0
             self.model.state[self.output_address] = 1
             self.inhibited_by = self.t_spike + self.param_set.t_refrac
@@ -147,8 +149,8 @@ class Neuron:
                 rest = [k for k in self.inputs if k not in not_rotten]
                 for synapse in not_rotten:
                     self.weights[synapse] += self.param_set.a_inc
-                    if self.weights[synapse] > max_level:
-                        self.weights[synapse] = max_level
+                    if self.weights[synapse] > self.weights_mask[synapse]:
+                        self.weights[synapse] = self.weights_mask[synapse]
                 for synapse in rest:
                     self.weights[synapse] -= self.param_set.a_dec
                     if self.weights[synapse] < min_level:
@@ -162,8 +164,10 @@ class Neuron:
         else:
             self.inhibited_by = self.model.time + self.param_set.t_inhibit
 
-    def reset(self):
-        self.weights = self.random_weights()
+    def reset(self, soft = False):
+        if not soft:
+            self.weights = self.random_weights()
+            self.label = ""
         self.input_level = 0
         self.output_level = 0
         self.t_last_spike = -1
@@ -171,7 +175,6 @@ class Neuron:
         self.inhibited_by = -1
         self.times_fired = 0
         self.ltp_times = {}
-        self.label = ""
         self.age = 0
 
     def attention_map(self):
@@ -214,6 +217,7 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
                                float(config["GENERAL PARAMETERS"]["false_positive_thres"]),
                                float(config["GENERAL PARAMETERS"]["valuable_logs_part"]))
     model = Model(neuron_parameters_set=nps, general_parameters_set=gps)
+    mask = load_mask(config["NEURON PARAMETERS"]["mask"])
     structure = config["GENERAL PARAMETERS"]["structure"]
     if isinstance(structure, str):
         structure = [structure]
@@ -228,6 +232,8 @@ def construct_network(feed_type, source_file="network1.txt", learn=True, update_
     model.state.update({s: 0 for s in model.outputs})
     return model, DataFeed(feed_type, model)
 
+def load_mask(source):
+    return np.around(np.divide(cv2.cvtColor(cv2.imread(source), cv2.COLOR_BGR2GRAY), 255.0), decimals=3)
 
 def load_network(source):
     with open(source, "rb") as f:
@@ -235,12 +241,20 @@ def load_network(source):
 
 
 def next_training_cycle(donor_model, feed):
+    donor_model.state = {k: 0 for k in donor_model.state.keys()}
     next_ev = feed.next_events()
     if feed.terminate:
         for layer in donor_model.layers:
             for neuron in layer['neurons']:
                 neuron.age += 1
     feed_events(donor_model, feed.source, next_ev)
+    return not feed.terminate
+
+
+def next_recognition_cycle(model, feed):
+    model.state = {k: 0 for k in model.state.keys()}
+    next_ev = feed.next_events()
+    feed_events(model, feed.source, next_ev)
     return not feed.terminate
 
 
@@ -255,7 +269,6 @@ def feed_events(model, source, events):
     for synapse in model.outputs:
         if model.state[synapse]:
             model.logs.append((synapse, source))
-    model.state = {k: 0 for k in model.state.keys()}
 
 def layer_update(model, layer):
     [neuron.update() for neuron in layer["neurons"]]
@@ -397,14 +410,14 @@ def show_attention_maps(model, folder: str):
         plt.show()
 
 
-def reset(model, feed):
+def reset(model, feed, issoft = False):
     model.time = 0
     feed.time_offset = 0
     model.state = {s: 0 for s in model.state}
     model.logs = []
     for layer in model.layers:
         for neuron in layer['neurons']:
-            neuron.reset()
+            neuron.reset(issoft)
 
 
 if __name__ == "__main__":

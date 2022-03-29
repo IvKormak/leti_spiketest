@@ -23,7 +23,7 @@
     </rect>
    </property>
    <property name="currentIndex">
-    <number>1</number>
+    <number>2</number>
    </property>
    <widget class="QWidget" name="tab">
     <attribute name="title">
@@ -526,19 +526,12 @@
              <height>391</height>
             </rect>
            </property>
-           <layout class="QVBoxLayout" name="reconSetsContainer"/>
+           <layout class="QVBoxLayout" name="reckonSetsContainer"/>
           </widget>
          </widget>
         </item>
         <item>
          <layout class="QHBoxLayout" name="horizontalLayout_5">
-          <item>
-           <widget class="QComboBox" name="datasetCombo_2">
-            <property name="placeholderText">
-             <string>-- Выбрать датасет --</string>
-            </property>
-           </widget>
-          </item>
           <item>
            <widget class="QPushButton" name="addSet">
             <property name="sizePolicy">
@@ -562,7 +555,7 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="recon">
+         <widget class="QPushButton" name="reckon">
           <property name="text">
            <string>Распознать</string>
           </property>
@@ -573,33 +566,17 @@
       <item>
        <layout class="QVBoxLayout" name="verticalLayout_6">
         <item>
-         <widget class="QLabel" name="reconGraphics">
+         <widget class="QLabel" name="reckonGraphics">
           <property name="text">
            <string/>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QScrollArea" name="answers">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
+         <widget class="QLabel" name="answers">
+          <property name="text">
+           <string/>
           </property>
-          <property name="widgetResizable">
-           <bool>true</bool>
-          </property>
-          <widget class="QWidget" name="scrollAreaWidgetContents">
-           <property name="geometry">
-            <rect>
-             <x>0</x>
-             <y>0</y>
-             <width>377</width>
-             <height>263</height>
-            </rect>
-           </property>
-          </widget>
          </widget>
         </item>
        </layout>
