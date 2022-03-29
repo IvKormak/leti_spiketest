@@ -263,6 +263,7 @@ class MainWindow(QWidget):
     def renderPreview(self):
         self.setStatus('Начинаем показ траектории')
         self.renderTimer = QTimer(self)
+        self.iterNextFrame = self._genNextFrame()
         self.renderTimer.timeout.connect(self.showNextFrame)
         self.renderTimer.timeout.connect(self.update)
         self.renderComplete = False
@@ -271,7 +272,7 @@ class MainWindow(QWidget):
     def showNextFrame(self):
         if not self.renderComplete:
             try:
-                self.preview.setPixmap(next(self._genNextFrame))
+                self.preview.setPixmap(next(self.iterNextFrame))
             except StopIteration:
                 self.renderComplete = True
                 self.setStatus('Готово')
