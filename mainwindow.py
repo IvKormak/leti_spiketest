@@ -21,10 +21,10 @@ from checkablecombobox import CheckableComboBox as CComboBox
 
 
 class MainWindow(QWidget):
-    startTraining = Signal(list)
-    endTraining = Signal()
-    startReckon = Signal()
-    endReckon = Signal()
+    start_training = Signal(list)
+    finish_training = Signal()
+    start_reckon = Signal()
+    finish_reckon = Signal()
 
     def __init__(self):
         super(MainWindow, self).__init__()
@@ -48,29 +48,21 @@ class MainWindow(QWidget):
         self.statusbar = self.findChild(QLabel, "statusbar")
 
         self.previewNew = self.findChild(QPushButton, "previewNew")
-        self.previewNew.clicked.connect(self._previewNew)
         self.appendToExisting = self.findChild(QPushButton, "appendToExisting")
-        self.appendToExisting.clicked.connect(self._appendToExisting)
         self.saveAsNew = self.findChild(QPushButton, "saveAsNew")
-        self.saveAsNew.clicked.connect(self._saveAsNew)
 
         self.datasetCombo = self.findChild(QComboBox, "datasetCombo")
         self.datasetLoad = self.findChild(QPushButton, "datasetLoad")
-        self.datasetLoad.clicked.connect(self._datasetLoad)
         self.datasetPreview = self.findChild(QPushButton, "datasetPreview")
-        self.datasetPreview.clicked.connect(self._datasetPreview)
         self.datasetPreview.setEnabled(False)
         self.datasetDelete = self.findChild(QPushButton, "datasetDelete")
-        self.datasetDelete.clicked.connect(self._datasetDelete)
 
         self.chooseConf = self.findChild(QPushButton, "chooseConf")
-        self.chooseConf.clicked.connect(self._chooseConf)
         self.numOfSets = self.findChild(QSpinBox, "numOfSets")
         self.poolSize = self.findChild(QSpinBox, "poolSize")
         self._poolSize = 1
         self.donorModels = []
         self.letsGo = self.findChild(QPushButton, "letsGo")
-        self.letsGo.clicked.connect(self._letsGo)
         self.trainResult = self.findChild(QLabel, "trainResult")
 
         self.preview = self.findChild(QLabel, "preview")
@@ -80,28 +72,33 @@ class MainWindow(QWidget):
 
         self.hl5 = self.findChild(QHBoxLayout, "horizontalLayout_5")
         self.datasetCombo_2 = CComboBox()
-        #self.datasetCombo_2 = self.findChild(QComboBox, "datasetCombo_2")
         self.hl5.insertWidget(0, self.datasetCombo_2)
 
         self.chooseModel = self.findChild(QPushButton, "chooseModel")
-        self.chooseModel.clicked.connect(self._chooseModel)
         self.deleteSets = self.findChild(QPushButton, "deleteSets")
         self.reckonSetsLayout = QVBoxLayout()
         self.reckonSetsContainer = self.findChild(QVBoxLayout, "reckonSetsContainer")
         self.reckonSetsInnerContainer = QScrollArea()
         self.reckonSetsContainer.insertWidget(0, self.reckonSetsInnerContainer)
-        self.deleteSets.clicked.connect(self._deleteSets)
         self.addSet = self.findChild(QPushButton, "addSet")
-        self.addSet.clicked.connect(self._addSet)
         self.answers = self.findChild(QLabel, "answers")
         self.reckonGraphics = self.findChild(QLabel, "reckonGraphics")
         self.reckon = self.findChild(QPushButton, "reckon")
         self.reckon.setEnabled(False)
         self.reckonPixmap = None
 
-        self.reckon.clicked.connect(self._startReckon)
-
-        self.loadTraces()
+        self.previewNew.clicked.connect(self.previewNew_handler)
+        self.appendToExisting.clicked.connect(self.appendToExisting_handler)
+        self.saveAsNew.clicked.connect(self.saveAsNew_handler)
+        self.datasetLoad.clicked.connect(self.datasetLoad_handler)
+        self.datasetPreview.clicked.connect(self.datasetPreview_handler)
+        self.datasetDelete.clicked.connect(self.datasetDelete_handler)
+        self.chooseConf.clicked.connect(self.chooseConf_handler)
+        self.letsGo.clicked.connect(self.letsGo_handler)
+        self.chooseModel.clicked.connect(self.chooseModel_handler)
+        self.deleteSets.clicked.connect(self.deleteSets_handler)
+        self.addSet.clicked.connect(self.addSet_handler)
+        self.reckon.clicked.connect(self.startReckon_handler)
 
         widget = QWidget()
         widget.setLayout(self.setsLayout)
@@ -113,6 +110,8 @@ class MainWindow(QWidget):
         scroll.setWidget(widget)
 
         self.setsContainer.insertWidget(0, scroll)
+
+        self.load_traces()
 
         self.dataset = None
         self.network_conf = ""
@@ -131,47 +130,54 @@ class MainWindow(QWidget):
         loader.load(ui_file, self)
         ui_file.close()
 
-    def setStatus(self, text):
+    def set_status(self, text):
         self.statusbar.setText(text)
         self.repaint()
 
-    def loadTraces(self):
-        self.setStatus('Начинаем загрузку')
+    def load_traces(self):
+        self.set_status('Начинаем загрузку')
         self.datasetCombo.clear()
         self.datasetCombo_2.clear()
         traces = self.db.read_trace_entries()
+
+        child = QObject()
+        while child != None:
+            child = self.setsLayout.takeAt(0)
+            del child.widget
+            del child
+
         for trace in traces:
             self.datasetCombo.addItem(trace.trace_alias, userData=trace.trace_path)
             self.datasetCombo_2.addItem(trace.trace_alias, userData=trace.trace_path)
             button = QCheckBox(trace.trace_alias)
-            button.stateChanged.connect(self.toggleDataSet(trace.trace_path, self.chosenSets))
+            button.stateChanged.connect(self.toggle_dataset(trace.trace_path, self.chosenSets))
             self.setsLayout.insertWidget(0, button)
         self.setsLayout.addStretch()
-        self.setStatus('Готово')
+        self.set_status('Готово')
 
-    def _addSet(self):
+    def addSet_handler(self):
         for path in self.datasetCombo_2.currentData():
             self.chosenReckonSets.append(self.db.get_trace_by_path(path))
-        self.renderReckonSets()
+        self.render_reckon_sets()
 
-    def _deleteSets(self):
+    def deleteSets_handler(self):
         self.chosenReckonSets = [i for i in self.chosenReckonSets if i.trace_path not in self.chosenToRemoveSets]
-        self.renderReckonSets()
+        self.render_reckon_sets()
 
-    def _chooseModel(self):
+    def chooseModel_handler(self):
         p = QFileDialog.getOpenFileName(self, "Выберите файл с обученной моделью", filter="*.pkl")
         if any(p):
             with open(self.path.relativeFilePath(p[0]), "rb") as f:
                 self.reckonModel = pickle.load(f)
         self.reckon.setEnabled(True)
 
-    def fillLabels(self, labels:dict):
+    def fill_labels(self, labels:dict):
         s = ""
         for k in labels.keys():
             s += f"{k}\n"
         self.answers.setText(s)
 
-    def renderReckonImage(self, events):
+    def render_reckon_image(self, events):
         if self.reckonPixmap is None:
             white_square = np.ones((28, 28), dtype=np.uint8)
             self.reckonPixmap = np.copy(white_square)
@@ -186,13 +192,13 @@ class MainWindow(QWidget):
             pixmap = QPixmap(img).scaledToHeight(300)
             self.reckonGraphics.setPixmap(pixmap)
 
-    def renderReckonSets(self):
+    def render_reckon_sets(self):
         self.reckonSetsContainer.removeWidget(self.reckonSetsInnerContainer)
         self.reckonSetsLayout = QVBoxLayout()
 
         for trace in self.chosenReckonSets:
             button = QCheckBox(trace.trace_alias)
-            button.stateChanged.connect(self.toggleDataSet(trace.trace_path, self.chosenToRemoveSets))
+            button.stateChanged.connect(self.toggle_dataset(trace.trace_path, self.chosenToRemoveSets))
             self.reckonSetsLayout.insertWidget(0, button)
         self.reckonSetsLayout.addStretch()
 
@@ -207,30 +213,30 @@ class MainWindow(QWidget):
 
         self.reckonSetsContainer.insertWidget(0, self.reckonSetsInnerContainer)
 
-    def _startReckon(self):
+    def startReckon_handler(self):
         self.reckonthread = QThread()
         self.reckonthread.start()
         self.reckognizer = ReckognizerWorker(self.reckonModel, self.chosenReckonSets)
         self.reckognizer.moveToThread(self.reckonthread)
-        self.reckognizer.done.connect(self._endReckon)
-        self.reckognizer.events.connect(self.renderReckonImage)
+        self.reckognizer.done.connect(self.end_reckon)
+        self.reckognizer.events.connect(self.render_reckon_image)
         self.reckognizer.events.connect(self.update)
         self.reckognizer.reckon.connect(self.fillLabels)
-        self.endReckon.connect(self.reckonthread.quit)
-        self.startReckon.connect(self.reckognizer.reckognize_frame)
-        self.startReckon.emit()
+        self.end_reckon.connect(self.reckonthread.quit)
+        self.start_reckon.connect(self.reckognizer.reckognize_frame)
+        self.start_reckon.emit()
 
-    def _endReckon(self):
+    def end_reckon(self):
         self.reckonPixmap = None
-        self.endReckon.emit()
+        self.end_reckon.emit()
         del self.reckognizer
         del self.reckonthread
 
-    def _datasetDelete(self):
+    def datasetDelete_handler(self):
         self.db.delete_trace_entry(self.datasetCombo.currentData())
-        self.loadTraces()
+        self.load_traces()
 
-    def toggleDataSet(self, alias, variable):
+    def toggle_dataset(self, alias, variable):
         def toggle(state):
             if not state:
                variable.remove(alias)
@@ -239,15 +245,15 @@ class MainWindow(QWidget):
 
         return toggle
 
-    def _datasetPreview(self):
-        self.renderPreview()
+    def datasetPreview_handler(self):
+        self.render_preview()
 
-    def _previewNew(self):
-        self.generateDataset()
-        self.renderPreview()
+    def previewNew_handler(self):
+        self.generate_dataset()
+        self.render_preview()
 
-    def generateDataset(self, time=0):
-        self.setStatus('Начинаем генерацию траектории')
+    def generate_dataset(self, time=0):
+        self.set_status('Начинаем генерацию траектории')
         self.dataset = []
         raw_dataset = ag.AERGen(radius=self.newDatasetInputs["radius"].value(),
                                 speed=self.newDatasetInputs["speed"].value(),
@@ -260,25 +266,25 @@ class MainWindow(QWidget):
             for ev in events:
                 self.dataset.append(ev)
 
-    def renderPreview(self):
-        self.setStatus('Начинаем показ траектории')
+    def render_preview(self):
+        self.set_status('Начинаем показ траектории')
         self.renderTimer = QTimer(self)
-        self.iterNextFrame = self._genNextFrame()
-        self.renderTimer.timeout.connect(self.showNextFrame)
+        self.iterNextFrame = self._gen_next_frame()
+        self.renderTimer.timeout.connect(self.show_next_frame)
         self.renderTimer.timeout.connect(self.update)
         self.renderComplete = False
-        self.showNextFrame()
+        self.show_next_frame()
 
-    def showNextFrame(self):
+    def show_next_frame(self):
         if not self.renderComplete:
             try:
                 self.preview.setPixmap(next(self.iterNextFrame))
             except StopIteration:
                 self.renderComplete = True
-                self.setStatus('Готово')
+                self.set_status('Готово')
             self.renderTimer.start(10)
 
-    def _genNextFrame(self):
+    def _gen_next_frame(self):
         white_square = np.ones((28, 28), dtype=np.uint8)
         current_frame = np.copy(white_square)
         frames_shown = 0
@@ -294,50 +300,50 @@ class MainWindow(QWidget):
             pixmap = QPixmap(img).scaledToHeight(300)
             yield pixmap
 
-    def _appendToExisting(self):
+    def appendToExisting_handler(self):
         filename = self.path.relativeFilePath(QFileDialog.getOpenFileName(self, "Open file", "")[0])
-        self._datasetLoad(path=filename)
-        self.generateDataset(time=self.dataset[-1].time)
+        self.datasetLoad_handler(path=filename)
+        self.generate_dataset(time=self.dataset[-1].time)
         with open(filename[0], 'a') as f:
             f.write(' '.join([ag.aer_encode(ev) for ev in self.dataset]))
         trace_entry = self.db.get_trace_by_path(filename)
         new_entry = cm.Trace(trace_entry.id, trace_entry.trace_path, trace_entry.trace_alias, trace_entry.speed,
                              self.dataset[-1].time, "")
         self.db.update(new_entry)
-        self.setStatus(f'Траектория добавлена к файлу {filename}')
+        self.set_status(f'Траектория добавлена к файлу {filename}')
 
-    def _saveAsNew(self):
+    def saveAsNew_handler(self):
         filename = QFileDialog.getSaveFileName(self, "Save file", "", ".bin")
-        self.generateDataset()
+        self.generate_dataset()
         with open(''.join(filename), 'w') as f:
             f.write(' '.join([ag.aer_encode(ev)[0] for ev in self.dataset]))
             self.db.add_trace_entry(filename[0].split('/')[-1],
                                     trace_path=self.path.relativeFilePath(''.join(filename)),
                                     target_speed=self.newDatasetInputs["speed"].value(), end_time=self.dataset[-1].time)
-        self.loadTraces()
-        self.setStatus(f'Сохранено в файл {filename}')
+        self.load_traces()
+        self.set_status(f'Сохранено в файл {filename}')
 
-    def _datasetLoad(self, path=""):
+    def datasetLoad_handler(self, path=""):
         if not path:
             path = self.datasetCombo.currentData()
         with open(path, 'r') as f:
             self.dataset = [ag.aer_decode(ev) for ev in f.readline().split(' ')]
         self.datasetPreview.setEnabled(True)
-        self.setStatus(f'Загружен файл {path}')
+        self.set_status(f'Загружен файл {path}')
 
-    def _chooseConf(self):
+    def chooseConf_handler(self):
         self.network_conf = self.path.relativeFilePath(
             QFileDialog.getOpenFileName(self, "Выберите файл с конфигурацией модели", "")[0])
         self.letsGo.setEnabled(True)
 
-    def _letsGo(self):
+    def letsGo_handler(self):
         self.timestart = time.time()
         if not self.network_conf:
-            self.setStatus("Конфигурация не выбрана!")
+            self.set_status("Конфигурация не выбрана!")
             return
         self.letsGo.setEnabled(False)
         self._poolSize = self.poolSize.value()
-        self.tracestogo = self._poolSize*len(self.chosenSets)*self.numOfSets.value()
+        self.tracestogo = self._poolSize*self.numOfSets.value()
         self.tracesdone = 0
         neuron_changes = {}
         general_changes = {"pool_size": str(self._poolSize), "epoch_length": str(self.numOfSets.value())}
@@ -358,29 +364,29 @@ class MainWindow(QWidget):
                                     update_neuron_parameters=neuron_changes,
                                     update_general_parameters=general_changes)
             trainer.moveToThread(thread)
-            self.startTraining.connect(trainer.train)
-            trainer.done.connect(self._trainingFinished)
-            trainer.trace_finished.connect(self.countProgress)
-            self.endTraining.connect(thread.quit)
+            self.start_training.connect(trainer.train)
+            trainer.done.connect(self.training_finished)
+            trainer.trace_finished.connect(self.count_progress)
+            self.finish_training.connect(thread.quit)
             self.threads.append(thread)
             self.trainers.append(trainer)
 
-        self.startTraining.emit(self.chosenSets)
-        self.setStatus('Начинаем обучение')
+        self.start_training.emit(self.chosenSets)
+        self.set_status('Начинаем обучение')
 
-    def countProgress(self):
+    def count_progress(self):
         self.tracesdone += 1
-        self.setStatus(f"Завершено {np.around(self.tracesdone/self.tracestogo*100, decimals=2)}%")
+        self.set_status(f"Завершено {np.around(self.tracesdone / self.tracestogo * 100, decimals=2)}%")
 
-    def _trainingFinished(self, donor_model):
+    def training_finished(self, donor_model):
         self.donorModels.append(donor_model)
         self._poolSize -= 1
-        self.setStatus(f"Обучение сети {self.poolSize.value() - self._poolSize} из {self.poolSize.value()} закончено")
+        self.set_status(f"Обучение сети {self.poolSize.value() - self._poolSize} из {self.poolSize.value()} закончено")
         if not self._poolSize:
             labels = main.fill_model_from_pool(self.target_model, self.donorModels)
             if len(labels) == len(self.chosenSets):
-                self.endTraining.emit()
-                self.setStatus(f"Времени затрачено: {time.time() - self.timestart}")
+                self.finish_training.emit()
+                self.set_status(f"Времени затрачено: {time.time() - self.timestart}")
                 folderToSave = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения файлов", "")
                 main.save_attention_maps(self.target_model, folderToSave)
 
@@ -401,8 +407,8 @@ class MainWindow(QWidget):
                 self.trainers = []
             else:
                 self._poolSize = self.poolSize.value()
-                self.startTraining.emit(self.chosenSets)
-                self.setStatus('Начинаем обучение заново')
+                self.start_training.emit(self.chosenSets)
+                self.set_status('Начинаем обучение заново')
 
 
 class TrainerWorker(QObject):

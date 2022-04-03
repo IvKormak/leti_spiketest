@@ -76,8 +76,10 @@ GeneralParametersSet = namedtuple("GeneralParametersSet", ["inhibit_radius",
                                                            "terminate_on_epoch",
                                                            "wta",
                                                            "false_positive_thres",
-                                                           "valuable_logs_part"])
+                                                           "valuable_logs_part"
+                                                           ])
 
+LayerStruct = namedtuple("LayerStruct", ["neurons", "shape"])
 
 @dataclass
 class Model:
@@ -235,9 +237,9 @@ def construct_network(feed_type, source_file, learn=True, update_neuron_paramete
     for layer in structure:
         model.state.update({s: 0 for s in config[layer]["inputs"].split(' ')})
         if config[layer]["type"] == "perceptron_layer":
-            model.layers.append({'neurons': [Neuron(model, output, config[layer]["inputs"].split(' '), learn, mask=mask)
+            model.layers.append(LayerStruct([Neuron(model, output, config[layer]["inputs"].split(' '), learn, mask=mask)
                                              for output in config[layer]["outputs"].split(' ')],
-                                 'shape': [int(s) for s in config[layer]["shape"].split(' ')]})
+                                 [int(s) for s in config[layer]["shape"].split(' ')]))
     model.outputs = config[layer]["outputs"].split(' ')
     model.state.update({s: 0 for s in model.outputs})
     return model, DataFeed(feed_type, model)
@@ -257,7 +259,7 @@ def next_training_cycle(donor_model, feed):
     next_ev = feed.next_events()
     if feed.terminate:
         for layer in donor_model.layers:
-            for neuron in layer['neurons']:
+            for neuron in layer.neurons:
                 neuron.age += 1
     feed_events(donor_model, feed.source, next_ev)
     return not feed.terminate
@@ -320,7 +322,7 @@ def label_neurons(donor_model):
 
     countlabels = {val: list(rename_dict.values()).count(val) for val in rename_dict.values()}
 
-    for neuron in donor_model.layers[-1]['neurons']:
+    for neuron in donor_model.layers[-1].neurons:
         if neuron.output_address in rename_dict:
             neuron.label = rename_dict[neuron.output_address]
 
@@ -348,17 +350,17 @@ def select_weights_from_pool(layers_pool, dup_thres):
 
 def fill_model_from_pool(model: Model, training_pool: [Model]):
     for i, layer in enumerate(model.layers):
-        layers_pool = [m.layers[i]['neurons'] for m in training_pool]
+        layers_pool = [m.layers[i].neurons for m in training_pool]
         learnt = select_weights_from_pool(layers_pool, model.general_parameters_set.execution_thres)
-        already_there = set([neuron.label for neuron in layer['neurons'] if neuron.label])
-        already_there_count = {k: [n.label for n in layer['neurons']].count(k) for k in already_there}
+        already_there = set([neuron.label for neuron in layer.neurons if neuron.label])
+        already_there_count = {k: [n.label for n in layer.neurons].count(k) for k in already_there}
 
         for k in already_there:
             if k in learnt:
                 learnt[k]['count'] -= already_there_count[k]
 
         select = []
-        free_neurons = [neuron for neuron in layer['neurons'] if not neuron.label]
+        free_neurons = [neuron for neuron in layer.neurons if not neuron.label]
 
         for label, e in learnt.items():
             if e['count'] > 0:
@@ -369,14 +371,14 @@ def fill_model_from_pool(model: Model, training_pool: [Model]):
             recipient.set_weights(graft)
             recipient.label = label
 
-        already_there = set([neuron.label for neuron in layer['neurons'] if neuron.label])
-        already_there_count = {k: [n.label for n in layer['neurons']].count(k) for k in already_there}
+        already_there = set([neuron.label for neuron in layer.neurons if neuron.label])
+        already_there_count = {k: [n.label for n in layer.neurons].count(k) for k in already_there}
 
     return already_there_count
 
 
 def delete_duplicate_neurons(model, countlabels):
-    for neuron in model.layers[-1]['neurons']:
+    for neuron in model.layers[-1].neurons:
         if neuron.label:
             if countlabels[neuron.label] > model.general_parameters_set.execution_thres:
                 countlabels[neuron.label] -= 1
@@ -385,11 +387,11 @@ def delete_duplicate_neurons(model, countlabels):
 
 
 def glue_attention_maps(model, folder):
-    res = np.ndarray([28*model.layers[-1]['shape'][0], 0])
-    for y in range(model.layers[-1]['shape'][1]):
+    res = np.ndarray([28*model.layers[-1].shape[0], 0])
+    for y in range(model.layers[-1].shape[1]):
         row = np.ndarray([0, 28])
-        for x in range(model.layers[-1]['shape'][0]):
-            synapse, label, map = model.layers[-1]['neurons'][y*model.layers[-1]['shape'][0]+x].attention_map()
+        for x in range(model.layers[-1].shape[0]):
+            synapse, label, map = model.layers[-1].neurons[y*model.layers[-1].shape[0]+x].attention_map()
             row = np.concatenate((row, map))
         res = np.concatenate((res, row), axis=1)
     plt.close()
@@ -400,7 +402,7 @@ def save_attention_maps(model, folder: str):
     attention_maps = []
     if not os.path.exists(folder):
         os.mkdir(folder)
-    for n in model.layers[-1]['neurons']:
+    for n in model.layers[-1].neurons:
         attention_maps.append(n.attention_map())
 
     for address, label, map in attention_maps:
@@ -413,7 +415,7 @@ def show_attention_maps(model, folder: str):
     attention_maps = []
     if not os.path.exists(folder):
         os.mkdir(folder)
-    for n in model.layers[-1]['neurons']:
+    for n in model.layers[-1].neurons:
         attention_maps.append(n.attention_map())
 
     for address, label, map in attention_maps:
@@ -428,54 +430,5 @@ def reset(model, feed, issoft = False):
     model.state = {s: 0 for s in model.state}
     model.logs = []
     for layer in model.layers:
-        for neuron in layer['neurons']:
+        for neuron in layer.neurons:
             neuron.reset(issoft)
-
-
-if __name__ == "__main__":
-
-    sets1000 = ["traces/b-t-1000.bin", "traces/l-r-1000.bin", "traces/r-l-1000.bin", "traces/t-b-1000.bin"]
-    sets3000 = ["traces/b-t-3000.bin", "traces/l-r-3000.bin", "traces/r-l-3000.bin", "traces/t-b-3000.bin"]
-    sets5000 = ["traces/b-t-5000.bin", "traces/l-r-5000.bin", "traces/r-l-5000.bin", "traces/t-b-5000.bin"]
-    sets100 = ["traces/b-t-100.bin", "traces/l-r-100.bin", "traces/r-l-100.bin", "traces/t-b-100.bin"]
-    sets500 = ["traces/b-t-500.bin", "traces/l-r-500.bin", "traces/r-l-500.bin", "traces/t-b-500.bin",
-               "traces/bl-tr-500.bin", "traces/tl-br-500.bin", "traces/br-tl-500.bin", "traces/tr-bl-500.bin"]
-
-    sweep = [("resources/models/network3_c.txt", "fukk3")]*1
-    t = time.time()
-    for file, folder in sweep:
-        target_model, feed = construct_network("iter", file, update_neuron_parameters={'epoch_length': '50'})
-        chosenSets = sets500
-        labels = {}
-        datasets = []
-        epoch_count = 0
-        learned_fully = False
-
-        for path in chosenSets:
-            with open(path, 'r') as f:
-                datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
-
-        reset(target_model, feed)
-
-        while not learned_fully or epoch_count < target_model.general_parameters_set.terminate_on_epoch:
-            [reset(donor_model, feed) for donor_model in training_pool]
-            epoch_count += 1
-            for path in chosenSets:
-                with open(path, 'r') as f:
-                    datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
-
-            for n in range(target_model.general_parameters_set.epoch_length):
-                alias, dataset = random.choice(datasets)
-                feed.load(alias, dataset)
-                while next_training_cycle(training_pool, feed):
-                    pass
-
-            for donor_model in training_pool:
-                label_neurons(donor_model)
-
-            labels = fill_model_from_pool(target_model, training_pool)
-
-            learned_fully = len(labels) == len(chosenSets)
-
-        print(f"end time: {time.time()-t}, {epoch_count} epochs")
-        save_attention_maps(target_model, f"experiments_results/{folder}")
