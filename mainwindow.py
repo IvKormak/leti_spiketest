@@ -5,8 +5,9 @@ import random
 import sys
 import time
 from pathlib import Path
-
+from concurrent import futures
 import numpy as np
+
 from PySide6.QtCore import QFile, QTimer, QDir, Qt, QObject, QThread, Signal
 from PySide6.QtGui import QPixmap, QImage, qRgb
 from PySide6.QtUiTools import QUiLoader
@@ -120,6 +121,9 @@ class MainWindow(QWidget):
         self.renderTimer = None
 
         self.colortable = [qRgb(i, i, i) for i in range(256)]
+
+        self.trainer = None
+        self.trainer_thread = None
 
 
     def load_ui(self):
@@ -353,23 +357,20 @@ class MainWindow(QWidget):
                                                          update_neuron_parameters=neuron_changes,
                                                          update_general_parameters=general_changes)
 
-        self.threads = []
-        self.trainers = []
-        for _ in range(self._poolSize):
-            thread = QThread()
-            thread.start()
-            trainer = TrainerWorker(feed_type="iter",
-                                    source_file=self.network_conf,
-                                    learn=True,
-                                    update_neuron_parameters=neuron_changes,
-                                    update_general_parameters=general_changes)
-            trainer.moveToThread(thread)
-            self.start_training.connect(trainer.train)
-            trainer.done.connect(self.training_finished)
-            trainer.trace_finished.connect(self.count_progress)
-            self.finish_training.connect(thread.quit)
-            self.threads.append(thread)
-            self.trainers.append(trainer)
+
+        self.trainer_thread = QThread()
+        self.trainer_thread.start()
+        self.trainer = TrainerWorker(pool_size=self._poolSize,
+                                     feed_type="iter",
+                                     source_file=self.network_conf,
+                                     learn=True,
+                                     update_neuron_parameters=neuron_changes,
+                                     update_general_parameters=general_changes)
+        self.trainer.moveToThread(self.trainer_thread)
+        self.start_training.connect(self.trainer.train)
+        self.trainer.done.connect(self.training_finished)
+        self.trainer.trace_finished.connect(self.count_progress)
+        self.finish_training.connect(self.trainer_thread.quit)
 
         self.start_training.emit(self.chosenSets)
         self.set_status('Начинаем обучение')
@@ -400,45 +401,45 @@ class MainWindow(QWidget):
                 self.trainResult.setPixmap(pixmap)
                 self.letsGo.setEnabled(True)
 
-                del self.threads
-                del self.trainers
-
-                self.threads = []
-                self.trainers = []
+                del self.trainer_thread
+                del self.trainer
             else:
                 self._poolSize = self.poolSize.value()
                 self.start_training.emit(self.chosenSets)
                 self.set_status('Начинаем обучение заново')
 
-
 class TrainerWorker(QObject):
     done = Signal(main.Model)
     trace_finished = Signal()
 
-    def __init__(self, **kwargs):
-        self.model, self.feed = main.construct_network(**kwargs)
+    def __init__(self, pool_size, **kwargs):
+        self.pool_size = pool_size
+        self.models, self.feeds = zip(*[main.construct_network(**kwargs) for _ in range(pool_size)])
+        self.process_pool = futures.ThreadPoolExecutor(max_workers=os.cpu_count())
         super().__init__()
 
-    def train(self, chosenSets):
-        main.reset(self.model, self.feed)
+    def run_learning(self, args):
+        model, feed, chosenSets = args
         datasets = []
         epoch_count = 0
-        main.reset(self.model, self.feed)
+        main.reset(model, feed)
         epoch_count += 1
         for path in chosenSets:
             with open(path, 'r') as f:
                 datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
-
-        for n in range(self.model.general_parameters_set.epoch_length):
+        for n in range(model.general_parameters_set.epoch_length):
             alias, dataset = random.choice(datasets)
-            self.feed.load(alias, dataset)
-            while main.next_training_cycle(self.model, self.feed):
+            feed.load(alias, dataset)
+            while main.next_training_cycle(model, feed):
                 pass
             self.trace_finished.emit()
+        main.label_neurons(model)
 
-        main.label_neurons(self.model)
+        self.done.emit(model)
 
-        self.done.emit(self.model)
+
+    def train(self, chosenSets):
+        self.process_pool.map(self.run_learning, zip(self.models, self.feeds, [chosenSets]*self.pool_size))
 
 
 class ReckognizerWorker(QObject):

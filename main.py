@@ -134,7 +134,6 @@ class Neuron:
         inputs = self.inputs
 
         events = [(state[address], address) for address in inputs if state[address]]
-
         if not events:
             return False
         for event, address in events:
@@ -145,7 +144,6 @@ class Neuron:
         if self.param_set.activation_function == "DeltaFunction":
             self.output_level = int(self.input_level>self.param_set.i_thres)
         if self.output_level:
-
             self.times_fired += 1
 
             min_level = self.param_set.w_min
@@ -285,18 +283,18 @@ def feed_events(model, source, events):
             model.logs.append((synapse, source))
 
 def layer_update(model, layer):
-    [neuron.update() for neuron in layer["neurons"]]
+    [neuron.update() for neuron in layer.neurons]
 
-    for row in range(layer["shape"][0]):
-        for col in range(layer["shape"][1]):
-            if layer["neurons"][row * layer["shape"][1] + col].output_level:
+    for row in range(layer.shape[0]):
+        for col in range(layer.shape[1]):
+            if layer.neurons[row * layer.shape[1] + col].output_level:
                 radius = model.general_parameters_set.inhibit_radius
                 for i in range(-radius, radius + 1):
                     for j in range(-radius + abs(i), radius - abs(i) + 1):
-                        if layer["shape"][0] > row + i >= 0 and layer["shape"][1] > col + j >= 0:
-                            layer["neurons"][(row + i) * layer["shape"][1] + col + j].inhibit()
+                        if layer.shape[0] > row + i >= 0 and layer.shape[1] > col + j >= 0:
+                            layer.neurons[(row + i) * layer.shape[1] + col + j].inhibit()
                             if model.general_parameters_set.wta:
-                                layer["neurons"][(row + i) * layer["shape"][1] + col + j].input_level = 0
+                                layer.neurons[(row + i) * layer.shape[1] + col + j].input_level = 0
 
 
 def label_neurons(donor_model):
