@@ -140,7 +140,7 @@ class MainWindow(QWidget):
         self.datasetCombo_2.clear()
         traces = self.db.read_trace_entries()
 
-        child = QObject()
+        child = self.setsLayout.takeAt(0)
         while child != None:
             child = self.setsLayout.takeAt(0)
             del child.widget
