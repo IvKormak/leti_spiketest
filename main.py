@@ -9,6 +9,7 @@ import configparser as cm
 import AERGen as ag
 import random
 import os
+from concurrent import futures
 from utility import *
 
 
@@ -57,6 +58,7 @@ class DataFeed:
     def await_event(self):
         pass
 
+
 NeuronParametersSet = namedtuple("NeuronParametersSet", ["i_thres",
                                                          "t_ltp",
                                                          "t_refrac",
@@ -81,6 +83,7 @@ GeneralParametersSet = namedtuple("GeneralParametersSet", ["inhibit_radius",
 
 LayerStruct = namedtuple("LayerStruct", ["neurons", "shape"])
 
+
 @dataclass
 class Model:
     neuron_parameters_set: NeuronParametersSet
@@ -104,8 +107,8 @@ class Neuron:
         if mask is not None:
             for x, row in enumerate(mask):
                 for y, el in enumerate(row):
-                    self.weights_mask[f"{format(x, '02x')}{format(y, '02x')}0"] = el*self.param_set.w_max
-                    self.weights_mask[f"{format(x, '02x')}{format(y, '02x')}8"] = el*self.param_set.w_max
+                    self.weights_mask[f"{format(x, '02x')}{format(y, '02x')}0"] = el * self.param_set.w_max
+                    self.weights_mask[f"{format(x, '02x')}{format(y, '02x')}8"] = el * self.param_set.w_max
 
         else:
             self.weights_mask = {k: self.param_set.w_max for k in self.weights.keys()}
@@ -130,7 +133,7 @@ class Neuron:
         if self.model.time <= self.inhibited_by:
             return 0
 
-        state = self.model.state #копируем для ускорения доступа
+        state = self.model.state  # копируем для ускорения доступа
         inputs = self.inputs
 
         events = [(state[address], address) for address in inputs if state[address]]
@@ -142,7 +145,7 @@ class Neuron:
             self.input_level += self.weights[address]
             self.ltp_times[address] = self.model.time + self.param_set.t_ltp
         if self.param_set.activation_function == "DeltaFunction":
-            self.output_level = int(self.input_level>self.param_set.i_thres)
+            self.output_level = int(self.input_level > self.param_set.i_thres)
         if self.output_level:
             self.times_fired += 1
 
@@ -171,7 +174,7 @@ class Neuron:
         else:
             self.inhibited_by = self.model.time + self.param_set.t_inhibit
 
-    def reset(self, soft = False):
+    def reset(self, soft=False):
         if not soft:
             self.weights = self.random_weights()
             self.label = ""
@@ -196,7 +199,8 @@ class Neuron:
         self.weights = weights.copy()
 
     def random_weights(self):
-        return {i: random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min) for i in self.inputs}
+        return {i: random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min) for i in
+                self.inputs}
 
 
 def construct_network(feed_type, source_file, learn=True, update_neuron_parameters={}, update_general_parameters={}):
@@ -237,15 +241,17 @@ def construct_network(feed_type, source_file, learn=True, update_neuron_paramete
         if config[layer]["type"] == "perceptron_layer":
             model.layers.append(LayerStruct([Neuron(model, output, config[layer]["inputs"].split(' '), learn, mask=mask)
                                              for output in config[layer]["outputs"].split(' ')],
-                                 [int(s) for s in config[layer]["shape"].split(' ')]))
+                                            [int(s) for s in config[layer]["shape"].split(' ')]))
     model.outputs = config[layer]["outputs"].split(' ')
     model.state.update({s: 0 for s in model.outputs})
     return model, DataFeed(feed_type, model)
 
+
 def load_mask(source):
     im = cv2.imread(source)
-    bw = cv2.cvtColor(im , cv2.COLOR_BGR2GRAY)
+    bw = cv2.cvtColor(im, cv2.COLOR_BGR2GRAY)
     return np.around(np.divide(bw, 255.0), decimals=3)
+
 
 def load_network(source):
     with open(source, "rb") as f:
@@ -282,6 +288,7 @@ def feed_events(model, source, events):
         if model.state[synapse]:
             model.logs.append((synapse, source))
 
+
 def layer_update(model, layer):
     [neuron.update() for neuron in layer.neurons]
 
@@ -298,8 +305,10 @@ def layer_update(model, layer):
 
 
 def label_neurons(donor_model):
-    neuron_journals = [l[0] for l in donor_model.logs[int(len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part):]]
-    teacher_journals = [l[1] for l in donor_model.logs[int(len(donor_model.logs)*donor_model.general_parameters_set.valuable_logs_part):]]
+    neuron_journals = [l[0] for l in donor_model.logs[int(len(
+        donor_model.logs) * donor_model.general_parameters_set.valuable_logs_part):]]
+    teacher_journals = [l[1] for l in donor_model.logs[int(len(
+        donor_model.logs) * donor_model.general_parameters_set.valuable_logs_part):]]
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
 
@@ -311,12 +320,13 @@ def label_neurons(donor_model):
         for n in range(len(R)):
             R[n].append(int(all_neurons[n] == fired_neuron))
 
-
     R, C = np.array(R), np.array(C)
     F = np.matmul(R, C)
 
     rename_dict = {all_neurons[i]: os.path.basename(all_traces[np.where(r == r.max())[0][0]]) for i, r in enumerate(F)
-                   if np.real(r.max()) > donor_model.general_parameters_set.false_positive_thres*np.imag(r.max())}
+                   if np.real(r.max()) > donor_model.general_parameters_set.false_positive_thres * np.imag(r.max())}
+    fp = {all_neurons[i]: r.max() for i, r in enumerate(F)
+                   if np.real(r.max()) > donor_model.general_parameters_set.false_positive_thres * np.imag(r.max())}
 
     countlabels = {val: list(rename_dict.values()).count(val) for val in rename_dict.values()}
 
@@ -325,7 +335,7 @@ def label_neurons(donor_model):
             neuron.label = rename_dict[neuron.output_address]
 
     donor_model.logs = []
-    return countlabels
+    return {'labels': countlabels, 'positive_to_false': fp}
 
 
 def select_weights_from_pool(layers_pool, dup_thres):
@@ -341,7 +351,7 @@ def select_weights_from_pool(layers_pool, dup_thres):
             else:
                 learnt_categories[n.label] = {}
                 learnt_categories[n.label]['ids'] = [id(n), ]
-                learnt_categories[n.label]['weights'] = [n.weights,]
+                learnt_categories[n.label]['weights'] = [n.weights, ]
                 learnt_categories[n.label]['count'] = 1
     return learnt_categories
 
@@ -385,16 +395,17 @@ def delete_duplicate_neurons(model, countlabels):
 
 
 def glue_attention_maps(model, folder):
-    res = np.ndarray([28*model.layers[-1].shape[0], 0])
+    res = np.ndarray([28 * model.layers[-1].shape[0], 0])
     for y in range(model.layers[-1].shape[1]):
         row = np.ndarray([0, 28])
         for x in range(model.layers[-1].shape[0]):
-            synapse, label, map = model.layers[-1].neurons[y*model.layers[-1].shape[0]+x].attention_map()
+            synapse, label, map = model.layers[-1].neurons[y * model.layers[-1].shape[0] + x].attention_map()
             row = np.concatenate((row, map))
         res = np.concatenate((res, row), axis=1)
     plt.close()
     plt.imshow(res)
     plt.savefig(f"{folder}/attention_maps.png")
+
 
 def save_attention_maps(model, folder: str):
     attention_maps = []
@@ -422,7 +433,7 @@ def show_attention_maps(model, folder: str):
         plt.show()
 
 
-def reset(model, feed, issoft = False):
+def reset(model, feed, issoft=False):
     model.time = 0
     feed.time_offset = 0
     model.state = {s: 0 for s in model.state}
@@ -430,3 +441,84 @@ def reset(model, feed, issoft = False):
     for layer in model.layers:
         for neuron in layer.neurons:
             neuron.reset(issoft)
+
+
+if __name__ == "__main__":
+    def train(model_and_feed):
+        model, feed, id = model_and_feed
+        datasets = []
+        chosenSets = ["traces/b-t-500.bin",
+                      "traces/bl-tr-500.bin",
+                      "traces/br-tl-500.bin",
+                      "traces/l-r-500.bin",
+                      "traces/r-l-500.bin",
+                      "traces/t-b-500.bin",
+                      "traces/tl-br-500.bin",
+                      "traces/tr-bl-500.bin"
+                      ]
+        for path in chosenSets:
+            with open(path, 'r') as f:
+                datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+        for n in range(model.general_parameters_set.epoch_length):
+            alias, dataset = random.choice(datasets)
+            feed.load(alias, dataset)
+            while next_training_cycle(model, feed):
+                pass
+        r = label_neurons(model)
+        return {'log': [id, r], 'model': model}
+
+
+    model_file = "resources/models/network3_c.txt"
+
+    general_variations = [{"wta": "0",
+                           "mask": "none"
+                           },
+                          {"wta": "1",
+                           "mask": "resources/mask-42.bmp"
+                           },
+                          {"wta": "0",
+                           "mask": "resources/mask-42.bmp"
+                           },
+                          {"wta": "1",
+                           "mask": "none"
+                           }
+                          ]
+
+    neuron_variations = {"w_random": ["0.5", "0.7", "1", "1.5"],
+                         "a_inc": ["70", "85", "100", "125", "150", "200"],
+                         "a_dec": ["50", "30", "80"],
+                         "t_ltp": ["2000", "500", "1500", "1750", "2500", "3000", "4000"],
+                         "w_min": ["1", "10"],
+                         "w_max": ["1000", "800", "900"],
+                         "t_refrac": ["10000", "8000", "12000"],
+                         "t_leak": ["5000", "4000", "6000"],
+                         "i_thres": ["12500", "11000", "15000"]
+                         }
+
+    models_and_feeds = []
+    alias_id = {}
+    id = 0
+    for gpv in general_variations:
+        for parameter in neuron_variations:
+            for var in neuron_variations[parameter]:
+                neuron_params = {k:neuron_variations[k][0] if k != parameter else var for k in neuron_variations}
+                models_and_feeds.append(list(construct_network("iter",
+                                                          model_file,
+                                                          update_neuron_parameters=neuron_params,
+                                                          update_general_parameters=gpv
+                                                          )
+                                        ))
+                gpvc = gpv.copy()
+                gpvc.update({parameter:var})
+                alias_id[id] = gpvc
+                models_and_feeds[-1].append(str(id))
+                id+=1
+    print(alias_id)
+    pool = futures.ThreadPoolExecutor(max_workers=os.cpu_count())
+    results = pool.map(train, models_and_feeds)
+    to_write = []
+    for res in list(results):
+        save_attention_maps(res['model'], f"experiments_results/{res['log'][0]}")
+        to_write.append(res['log'])
+    with open("experiments_results/repeat.txt", 'w') as f:
+        f.write(str(to_write))

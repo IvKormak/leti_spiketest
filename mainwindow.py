@@ -85,6 +85,7 @@ class MainWindow(QWidget):
         self.answers = self.findChild(QLabel, "answers")
         self.reckonGraphics = self.findChild(QLabel, "reckonGraphics")
         self.reckon = self.findChild(QPushButton, "reckon")
+        self.usePool = self.findChild(QCheckBox, "usePool")
         self.reckon.setEnabled(False)
         self.reckonPixmap = None
 
@@ -100,6 +101,7 @@ class MainWindow(QWidget):
         self.deleteSets.clicked.connect(self.deleteSets_handler)
         self.addSet.clicked.connect(self.addSet_handler)
         self.reckon.clicked.connect(self.startReckon_handler)
+
 
         widget = QWidget()
         widget.setLayout(self.setsLayout)
@@ -259,16 +261,15 @@ class MainWindow(QWidget):
     def generate_dataset(self, time=0):
         self.set_status('Начинаем генерацию траектории')
         self.dataset = []
-        raw_dataset = ag.AERGen(radius=self.newDatasetInputs["radius"].value(),
-                                speed=self.newDatasetInputs["speed"].value(),
-                                pos_start=ag.Position(self.newDatasetInputs["initialPosition"]["x"].value(),
-                                                      self.newDatasetInputs["initialPosition"]["y"].value()),
-                                pos_end=ag.Position(self.newDatasetInputs["endPosition"]["x"].value(),
-                                                    self.newDatasetInputs["endPosition"]["y"].value()),
-                                start_time=time)
-        for events in raw_dataset:
-            for ev in events:
-                self.dataset.append(ev)
+        raw_dataset = ag.AERGen(radius=ndi["radius"].value(),
+                                 speed=ndi["speed"].value(),
+                                 pos_start=ag.Position(ndi["initialPosition"]["x"].value(),
+                                                       ndi["initialPosition"]["y"].value()),
+                                 pos_end=ag.Position(ndi["endPosition"]["x"].value(),
+                                                     ndi["endPosition"]["y"].value()),
+                                 start_time=time)
+        for ev in raw_dataset:
+            self.dataset += ev
 
     def render_preview(self):
         self.set_status('Начинаем показ траектории')
@@ -346,7 +347,7 @@ class MainWindow(QWidget):
             self.set_status("Конфигурация не выбрана!")
             return
         self.letsGo.setEnabled(False)
-        self._poolSize = self.poolSize.value()
+        self._poolSize = self.poolSize.value() if self.usePool.checkState() else 1
         self.tracestogo = self._poolSize*self.numOfSets.value()
         self.tracesdone = 0
         neuron_changes = {}
@@ -371,7 +372,6 @@ class MainWindow(QWidget):
         self.trainer.done.connect(self.training_finished)
         self.trainer.trace_finished.connect(self.count_progress)
         self.finish_training.connect(self.trainer_thread.quit)
-
         self.start_training.emit(self.chosenSets)
         self.set_status('Начинаем обучение')
 
@@ -384,17 +384,40 @@ class MainWindow(QWidget):
         self._poolSize -= 1
         self.set_status(f"Обучение сети {self.poolSize.value() - self._poolSize} из {self.poolSize.value()} закончено")
         if not self._poolSize:
-            labels = main.fill_model_from_pool(self.target_model, self.donorModels)
-            if len(labels) == len(self.chosenSets):
+            if self.usePool.checkState():
+                labels = main.fill_model_from_pool(self.target_model, self.donorModels)
+                if len(labels) == len(self.chosenSets):
+                    self.finish_training.emit()
+                    self.set_status(f"Времени затрачено: {time.time() - self.timestart}")
+                    folderToSave = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения файлов", "")
+                    main.save_attention_maps(self.target_model, folderToSave)
+
+                    with open(f"{folderToSave}/model.pkl", "wb") as f:
+                        pickle.dump(self.target_model, f)
+
+                    main.glue_attention_maps(self.target_model, folderToSave)
+                    img = QImage(f"{folderToSave}/attention_maps.png")
+                    pixmap = QPixmap(img).scaledToHeight(300)
+
+                    self.trainResult.setPixmap(pixmap)
+                    self.letsGo.setEnabled(True)
+
+                    del self.trainer_thread
+                    del self.trainer
+                else:
+                    self._poolSize = self.poolSize.value()
+                    self.start_training.emit(self.chosenSets)
+                    self.set_status('Начинаем обучение заново')
+            else:
                 self.finish_training.emit()
                 self.set_status(f"Времени затрачено: {time.time() - self.timestart}")
                 folderToSave = QFileDialog.getExistingDirectory(self, "Выберите папку для сохранения файлов", "")
-                main.save_attention_maps(self.target_model, folderToSave)
+                main.save_attention_maps(self.donorModels[0], folderToSave)
 
                 with open(f"{folderToSave}/model.pkl", "wb") as f:
-                    pickle.dump(self.target_model, f)
+                    pickle.dump(self.donorModels[0], f)
 
-                main.glue_attention_maps(self.target_model, folderToSave)
+                main.glue_attention_maps(self.donorModels[0], folderToSave)
                 img = QImage(f"{folderToSave}/attention_maps.png")
                 pixmap = QPixmap(img).scaledToHeight(300)
 
@@ -403,10 +426,7 @@ class MainWindow(QWidget):
 
                 del self.trainer_thread
                 del self.trainer
-            else:
-                self._poolSize = self.poolSize.value()
-                self.start_training.emit(self.chosenSets)
-                self.set_status('Начинаем обучение заново')
+            self.donorModels = []
 
 class TrainerWorker(QObject):
     done = Signal(main.Model)
