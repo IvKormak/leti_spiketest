@@ -183,17 +183,17 @@ class MainWindow(QWidget):
             s += f"{k}\n"
         self.answers.setText(s)
 
-    def render_reckon_image(self, events):
+    def render_reckon_image(self, events, shape):
         if self.reckonPixmap is None:
-            white_square = np.ones((28, 28), dtype=np.uint8)
+            white_square = np.ones(shape, dtype=np.uint8)
             self.reckonPixmap = np.copy(white_square)
         for ev in events:
             x_coord = ev.position.x
             y_coord = ev.position.y
             color = ev.polarity * 255
-            if 0 <= x_coord < 28 and 0 <= y_coord < 28:
+            if 0 <= x_coord < shape[0] and 0 <= y_coord < shape[1]:
                 self.reckonPixmap[y_coord][x_coord] = color
-            img = QImage(self.reckonPixmap, 28, 28, 28, QImage.Format_Indexed8)
+            img = QImage(self.reckonPixmap, shape[0], shape[1], shape[0], QImage.Format_Indexed8)
             img.setColorTable(self.colortable)
             pixmap = QPixmap(img).scaledToHeight(300)
             self.reckonGraphics.setPixmap(pixmap)
@@ -261,12 +261,12 @@ class MainWindow(QWidget):
     def generate_dataset(self, time=0):
         self.set_status('Начинаем генерацию траектории')
         self.dataset = []
-        raw_dataset = ag.AERGen(radius=ndi["radius"].value(),
-                                 speed=ndi["speed"].value(),
-                                 pos_start=ag.Position(ndi["initialPosition"]["x"].value(),
-                                                       ndi["initialPosition"]["y"].value()),
-                                 pos_end=ag.Position(ndi["endPosition"]["x"].value(),
-                                                     ndi["endPosition"]["y"].value()),
+        raw_dataset = ag.AERGen(radius=self.newDatasetInputs["radius"].value(),
+                                 speed=self.newDatasetInputs["speed"].value(),
+                                 pos_start=ag.Position(self.newDatasetInputs["initialPosition"]["x"].value(),
+                                                       self.newDatasetInputs["initialPosition"]["y"].value()),
+                                 pos_end=ag.Position(self.newDatasetInputs["endPosition"]["x"].value(),
+                                                     self.newDatasetInputs["endPosition"]["y"].value()),
                                  start_time=time)
         for ev in raw_dataset:
             self.dataset += ev
@@ -274,7 +274,7 @@ class MainWindow(QWidget):
     def render_preview(self):
         self.set_status('Начинаем показ траектории')
         self.renderTimer = QTimer(self)
-        self.iterNextFrame = self._gen_next_frame()
+        self.iterNextFrame = self._gen_next_frame((28, 28))
         self.renderTimer.timeout.connect(self.show_next_frame)
         self.renderTimer.timeout.connect(self.update)
         self.renderComplete = False
@@ -289,18 +289,18 @@ class MainWindow(QWidget):
                 self.set_status('Готово')
             self.renderTimer.start(10)
 
-    def _gen_next_frame(self):
-        white_square = np.ones((28, 28), dtype=np.uint8)
+    def _gen_next_frame(self, shape):
+        white_square = np.ones(shape, dtype=np.uint8)
         current_frame = np.copy(white_square)
         frames_shown = 0
         for ev in self.dataset:
             x_coord = ev.position.x
             y_coord = ev.position.y
             color = ev.polarity * 255
-            if 0 <= x_coord < 28 and 0 <= y_coord < 28:
+            if 0 <= x_coord < shape[0] and 0 <= y_coord < shape[1]:
                 current_frame[y_coord][x_coord] = color
             frames_shown += 1
-            img = QImage(current_frame, 28, 28, 28, QImage.Format_Indexed8)
+            img = QImage(current_frame, shape[0], shape[1], shape[0], QImage.Format_Indexed8)
             img.setColorTable(self.colortable)
             pixmap = QPixmap(img).scaledToHeight(300)
             yield pixmap
@@ -464,7 +464,7 @@ class TrainerWorker(QObject):
 
 class ReckognizerWorker(QObject):
     reckon = Signal(dict)
-    events = Signal(list)
+    events = Signal(list, tuple)
     done = Signal()
 
     def __init__(self, model, chosenSets):
@@ -493,7 +493,7 @@ class ReckognizerWorker(QObject):
                     for synapse in self.model.outputs}
 
     def reckognize_frame(self):
-        self.events.emit(self.feed.next_events(peek=True))
+        self.events.emit(self.feed.next_events(peek=True), self.model.layers[-1].per_field_shape)
         fired_neurons = [self.lut[synapse] for synapse in self.model.outputs if self.model.state[synapse]]
         for label in fired_neurons:
             self.neuron_signals[label] = self.time

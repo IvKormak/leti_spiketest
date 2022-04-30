@@ -81,7 +81,7 @@ GeneralParametersSet = namedtuple("GeneralParametersSet", ["inhibit_radius",
                                                            "valuable_logs_part"
                                                            ])
 
-LayerStruct = namedtuple("LayerStruct", ["neurons", "shape"])
+LayerStruct = namedtuple("LayerStruct", ["neurons", "shape", "per_field_shape"])
 
 
 @dataclass
@@ -193,7 +193,10 @@ class Neuron:
         all_pixels = [self.weights[on] if self.weights[on] > self.weights[off]
                       else -1 * self.weights[off]
                       for on, off in zip(pixels_on, pixels_off)]
-        return self.output_address, self.label, np.array(all_pixels).reshape((28, 28)).transpose()
+        return self.output_address, \
+               self.label, \
+               np.array(all_pixels).reshape((self.model.layers[-1].per_field_shape[0],
+                                             self.model.layers[-1].per_field_shape[1])).transpose()
 
     def set_weights(self, weights):
         self.weights = weights.copy()
@@ -241,7 +244,8 @@ def construct_network(feed_type, source_file, learn=True, update_neuron_paramete
         if config[layer]["type"] == "perceptron_layer":
             model.layers.append(LayerStruct([Neuron(model, output, config[layer]["inputs"].split(' '), learn, mask=mask)
                                              for output in config[layer]["outputs"].split(' ')],
-                                            [int(s) for s in config[layer]["shape"].split(' ')]))
+                                            tuple(map(int, config[layer]["shape"].split(' '))),
+                                            tuple(map(int, config[layer]["per_field_shape"].split(' ')))))
     model.outputs = config[layer]["outputs"].split(' ')
     model.state.update({s: 0 for s in model.outputs})
     return model, DataFeed(feed_type, model)
@@ -395,9 +399,9 @@ def delete_duplicate_neurons(model, countlabels):
 
 
 def glue_attention_maps(model, folder):
-    res = np.ndarray([28 * model.layers[-1].shape[0], 0])
+    res = np.ndarray([model.layers[-1].per_field_shape[0] * model.layers[-1].shape[0], 0])
     for y in range(model.layers[-1].shape[1]):
-        row = np.ndarray([0, 28])
+        row = np.ndarray([0, model.layers[-1].per_field_shape[1]])
         for x in range(model.layers[-1].shape[0]):
             synapse, label, map = model.layers[-1].neurons[y * model.layers[-1].shape[0] + x].attention_map()
             row = np.concatenate((row, map))
