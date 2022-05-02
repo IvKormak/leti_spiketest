@@ -327,10 +327,13 @@ def label_neurons(donor_model):
     R, C = np.array(R), np.array(C)
     F = np.matmul(R, C)
 
+    mean_category_apperance = len(C)/len(all_traces)
+    # reckognition error after doi:10.1109/ijcnn.2017.7966336
+    weighted_error = lambda x: (mean_category_apperance - np.real(x)) / mean_category_apperance + np.imag(x) / ((len(C) - 1) * mean_category_apperance)
+
+    recognition_error = {all_neurons[i]: weighted_error(r.max()) for i, r in enumerate(F)}
     rename_dict = {all_neurons[i]: os.path.basename(all_traces[np.where(r == r.max())[0][0]]) for i, r in enumerate(F)
-                   if np.real(r.max()) > donor_model.general_parameters_set.false_positive_thres * np.imag(r.max())}
-    fp = {all_neurons[i]: r.max() for i, r in enumerate(F)
-                   if np.real(r.max()) > donor_model.general_parameters_set.false_positive_thres * np.imag(r.max())}
+                   if recognition_error[all_neurons[i]] < donor_model.general_parameters_set.false_positive_thres}
 
     countlabels = {val: list(rename_dict.values()).count(val) for val in rename_dict.values()}
 
@@ -339,7 +342,7 @@ def label_neurons(donor_model):
             neuron.label = rename_dict[neuron.output_address]
 
     donor_model.logs = []
-    return {'labels': countlabels, 'positive_to_false': fp}
+    return {'labels': countlabels, 'recognition_error': recognition_error}
 
 
 def select_weights_from_pool(layers_pool, dup_thres):
