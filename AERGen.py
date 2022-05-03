@@ -103,7 +103,34 @@ def aer_decode(entry:str):
     return Event(synapse, Position(x, y), p, time)
 
 if __name__ == "__main__":
-    test_trace = AERGen(radius = 3, speed = 5000)
-    for d in test_trace:
-        pass
-    print("\n".join(aer_encode(test_trace.events)))
+    s = {"l": [Event(synapse_encode(1, 0, 0), Position(1, 0), 1, 0),
+         Event(synapse_encode(1, 0, 0), Position(1, 0), 0, 10)],
+         "c": [Event(synapse_encode(2, 0, 0), Position(2, 0), 1, 0),
+          Event(synapse_encode(2, 0, 0), Position(2, 0), 0, 10)],
+         "r": [Event(synapse_encode(3, 0, 0), Position(3, 0), 1, 0),
+          Event(synapse_encode(3, 0, 0), Position(3, 0), 0, 10)],
+         "lc": [Event(synapse_encode(1, 0, 0), Position(1, 0), 1, 0),
+          Event(synapse_encode(2, 0, 0), Position(2, 0), 1, 0),
+          Event(synapse_encode(1, 0, 0), Position(1, 0), 0, 10),
+          Event(synapse_encode(2, 0, 0), Position(2, 0), 0, 10)],
+         "lr": [Event(synapse_encode(1, 0, 0), Position(1, 0), 1, 0),
+          Event(synapse_encode(3, 0, 0), Position(3, 0), 1, 0),
+          Event(synapse_encode(1, 0, 0), Position(1, 0), 0, 10),
+          Event(synapse_encode(3, 0, 0), Position(3, 0), 0, 10)],
+         "cr": [Event(synapse_encode(2, 0, 0), Position(2, 0), 1, 0),
+          Event(synapse_encode(3, 0, 0), Position(3, 0), 1, 0),
+          Event(synapse_encode(2, 0, 0), Position(2, 0), 0, 10),
+          Event(synapse_encode(3, 0, 0), Position(3, 0), 0, 10)],
+         "a": [Event(synapse_encode(1, 0, 0), Position(1, 0), 1, 0),
+          Event(synapse_encode(2, 0, 0), Position(2, 0), 1, 0),
+          Event(synapse_encode(3, 0, 0), Position(3, 0), 1, 0),
+          Event(synapse_encode(1, 0, 0), Position(1, 0), 0, 10),
+          Event(synapse_encode(2, 0, 0), Position(2, 0), 0, 10),
+          Event(synapse_encode(3, 0, 0), Position(3, 0), 0, 10)],
+         }
+
+    for l, tr in s.items():
+        evs = aer_encode(tr)
+        with open(f"traces/ryndin/{l}.bin", "w") as f:
+            f.write("".join(evs))
+        print("\n".join(evs))

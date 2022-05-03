@@ -9,6 +9,7 @@ import configparser as cm
 import AERGen as ag
 import random
 import os
+import csv
 from concurrent import futures
 from utility import *
 
@@ -99,6 +100,7 @@ class Neuron:
     def __init__(self, model, output_address, inputs, learn=True, weights=None, mask=None):
         self.model = model
         self.param_set = model.neuron_parameters_set
+        self.error = -1
         self.output_address = output_address
         self.learn = learn
         self.inputs = inputs
@@ -195,6 +197,7 @@ class Neuron:
                       for on, off in zip(pixels_on, pixels_off)]
         return self.output_address, \
                self.label, \
+               self.error, \
                np.array(all_pixels).reshape((self.model.layers[-1].per_field_shape[0],
                                              self.model.layers[-1].per_field_shape[1])).transpose()
 
@@ -310,9 +313,9 @@ def layer_update(model, layer):
 
 def label_neurons(donor_model):
     neuron_journals = [l[0] for l in donor_model.logs[int(len(
-        donor_model.logs) * donor_model.general_parameters_set.valuable_logs_part):]]
+        donor_model.logs) * (1-donor_model.general_parameters_set.valuable_logs_part)):]]
     teacher_journals = [l[1] for l in donor_model.logs[int(len(
-        donor_model.logs) * donor_model.general_parameters_set.valuable_logs_part):]]
+        donor_model.logs) * (1-donor_model.general_parameters_set.valuable_logs_part)):]]
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
 
@@ -338,6 +341,8 @@ def label_neurons(donor_model):
     countlabels = {val: list(rename_dict.values()).count(val) for val in rename_dict.values()}
 
     for neuron in donor_model.layers[-1].neurons:
+        if neuron.output_address in recognition_error:
+            neuron.error = recognition_error[neuron.output_address]
         if neuron.output_address in rename_dict:
             neuron.label = rename_dict[neuron.output_address]
 
@@ -421,10 +426,10 @@ def save_attention_maps(model, folder: str):
     for n in model.layers[-1].neurons:
         attention_maps.append(n.attention_map())
 
-    for address, label, map in attention_maps:
+    for address, label, error, map in attention_maps:
         plt.close()
         plt.imshow(map)
-        plt.savefig(f"{folder}/att_map_{address}_{label}.png")
+        plt.savefig(f"{folder}/att_map_{address}_{label}_err_{error:.3f}.png")
 
 
 def show_attention_maps(model, folder: str):
@@ -491,21 +496,18 @@ if __name__ == "__main__":
                            }
                           ]
 
-    neuron_variations = {"w_random": ["0.5", "0.7", "1", "1.5"],
-                         "a_inc": ["70", "85", "100", "125", "150", "200"],
-                         "a_dec": ["50", "30", "80"],
-                         "t_ltp": ["2000", "500", "1500", "1750", "2500", "3000", "4000"],
-                         "w_min": ["1", "10"],
-                         "w_max": ["1000", "800", "900"],
-                         "t_refrac": ["10000", "8000", "12000"],
-                         "t_leak": ["5000", "4000", "6000"],
-                         "i_thres": ["12500", "11000", "15000"]
-                         }
+    #neuron_variations = {"w_random": ["0.5", "1", "1.5"],
+    #                     "a_inc": ["70", "100", "125", "200"],
+    #                     "w_max": ["700", "1000", "1500"],
+    #                     "t_refrac": ["8000","10000",  "12000"],
+    #                     "t_leak": ["4000", "5000", "6000"],
+    #                     }
+    neuron_variations = {"w_random": ["0.5"]}
 
     models_and_feeds = []
     alias_id = {}
     id = 0
-    for gpv in general_variations:
+    for gpv in [{"wta": "0","mask": "none"}]:#general_variations:
         for parameter in neuron_variations:
             for var in neuron_variations[parameter]:
                 neuron_params = {k:neuron_variations[k][0] if k != parameter else var for k in neuron_variations}
@@ -521,11 +523,36 @@ if __name__ == "__main__":
                 models_and_feeds[-1].append(str(id))
                 id+=1
     print(alias_id)
-    pool = futures.ThreadPoolExecutor(max_workers=os.cpu_count())
-    results = pool.map(train, models_and_feeds)
-    to_write = []
+    results = []
+    for mf in models_and_feeds:
+        results.append(train(mf))
+    text = {'ids': alias_id, 'data': []}
     for res in list(results):
         save_attention_maps(res['model'], f"experiments_results/{res['log'][0]}")
-        to_write.append(res['log'])
-    with open("experiments_results/repeat.txt", 'w') as f:
-        f.write(str(to_write))
+        with open(f"experiments_results/{res['log'][0]}/model.pkl", "wb") as f:
+            pickle.dump(res['model'], f)
+        text['data'].append(res['log'])
+    with open('experiments_results/data.csv', 'w') as f:
+        va = ""
+        fieldnames = ["id", "parameters", "variable", "trace_count", "max_trace", "recognition_error_mean",
+                      "count_to_error"]
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
+        writer.writeheader()
+        for entry in text['data']:
+            id = entry[0]
+            param = text['ids'][int(id)]
+            va = text['ids'][int(id)][[key for key in text['ids'][int(id)].keys() if key not in ['wta', 'mask']][0]]
+            tc = len(entry[1]['labels'])
+            if len(entry[1]['labels']):
+                mx = max(entry[1]['labels'].values())
+            else:
+                mx = 0
+            mean = sum(entry[1]['recognition_error'].values()) / len(entry[1]['recognition_error'])
+            tctomean = tc / mean if mean else -1
+            writer.writerow({"id": id,
+                             "parameters": param,
+                             "variable": va,
+                             "trace_count": tc,
+                             "max_trace": mx,
+                             "recognition_error_mean": mean,
+                             "count_to_error": tctomean})
