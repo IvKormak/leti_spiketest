@@ -453,7 +453,7 @@ class TrainerWorker(QObject):
             while main.next_training_cycle(model, feed):
                 pass
             self.trace_finished.emit()
-        main.label_neurons(model)
+        main.label_neurons(model, len(TEST_SETS) / 5)
 
         self.done.emit(model)
 
