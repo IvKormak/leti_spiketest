@@ -7,6 +7,10 @@ class FlushNeuron(Neuron):
     def __init__(self, model, output_address, inputs, learn=True, weights=None, mask=None):
         super(FlushNeuron, self).__init__(model, output_address, inputs, learn, weights, mask)
         self.pre = {i: {'potential': 0, 'time': -1} for i in self.inputs}
+
+    def random_weights(self):
+        return {w: random.random()*(self.param_set.w_max-self.param_set.w_min)-self.param_set.w_max for w in self.inputs}
+
     def reset(self, soft=False):
         self.pre = {_: {'potential': 0, 'time': -1} for _ in self.pre}
         super(FlushNeuron, self).reset(soft)
@@ -52,16 +56,21 @@ class FlushNeuron(Neuron):
                               self.ltp_times[k] >= self.t_spike - self.param_set.t_ltp]
                 rest = [k for k in self.inputs if k not in not_rotten]
                 for synapse in not_rotten:
-                    self.weights[synapse] += self.param_set.a_inc
+                    inc = self.param_set.a_inc if self.weights[synapse] > 0 else -self.param_set.a_inc
+                    self.weights[synapse] += inc
                     if self.weights[synapse] > self.weights_mask[synapse]:
                         self.weights[synapse] = self.weights_mask[synapse]
                 for synapse in rest:
-                    self.weights[synapse] -= self.param_set.a_dec
+                    dec = self.param_set.a_dec if self.weights[synapse] > 0 else -self.param_set.a_dec
+                    self.weights[synapse] -= dec
                     if self.weights[synapse] < min_level:
                         self.weights[synapse] = min_level
-            if sum(self.weights.values()) > 255:
-                weights_scale = 255/sum(self.weights.values())
-                self.weights = {k:v*weights_scale for k, v in self.weights.items()}
+            if sum([x for x in self.weights.values() if x>0]) > self.param_set.w_max:
+                weights_scale = self.param_set.w_max/sum([x for x in self.weights.values() if x>0])
+                self.weights = {k:v*weights_scale if v > 0 else v for k, v in self.weights.items()}
+            if sum([x for x in self.weights.values() if x<0]) < self.param_set.w_min:
+                weights_scale = self.param_set.w_min/sum([x for x in self.weights.values() if x<0])
+                self.weights = {k:v*weights_scale if v < 0 else v for k, v in self.weights.items()}
             self.ltp_times = {}
         return self.output_level
 
@@ -187,7 +196,16 @@ rows = {
     'left-center': [construct_trace([[r[0], r[1]]])],
     'center-right': [construct_trace([[r[1], r[2]]])],
     'left-right': [construct_trace([[r[0], r[2]]])],
-    # 'all': [construct_trace([[r[0], r[1], r[2]]])],
+    'all': [construct_trace([[r[0], r[1], r[2]]])],
+}
+rows = {
+    'left': [construct_trace([[r[0],r[4],r[5]]])],
+    'center': [construct_trace([[r[1],r[3],r[5]]])],
+    'right': [construct_trace([[r[2],r[4],r[3]]])],
+    'left-center': [construct_trace([[r[0], r[1], r[5]]])],
+    'center-right': [construct_trace([[r[1], r[2], r[3]]])],
+    'left-right': [construct_trace([[r[0], r[2], r[4]]])],
+    'all': [construct_trace([[r[0], r[1], r[2]]])],
 }
 test_rows = [(k,v[0]) for k,v in rows.items()]*3
 
@@ -226,27 +244,27 @@ def feed_card(model, card, offset):
     return time-1
 
 
-inputs = [f'i{_}' for _ in range(1,4)]
+inputs = [f'i{_}' for _ in range(1,7)]
 # inputs_depressing = [f'i{_}' for _ in range(4,7)]
 outputs = [f'o{_}' for _ in range(1,10)]
 
-nps = NeuronParametersSet(i_thres=150,
+nps = NeuronParametersSet(i_thres=50,
                           t_ltp=10,
                           t_refrac=160,
                           t_inhibit=10,
-                          t_leak=30,
-                          w_min=1,
-                          w_max=255,
+                          t_leak=5,
+                          w_min=-127,
+                          w_max=128,
                           w_random=1,
                           a_inc=50,
                           a_dec=20,
                           activation_function="DeltaFunction")
 gps = GeneralParametersSet(inhibit_radius=1,
-                           epoch_length=20,
+                           epoch_length=50,
                            execution_thres=1,
                            terminate_on_epoch=3,
                            wta=0,
-                           false_positive_thres=2,
+                           false_positive_thres=0.5,
                            mask=None)
 
 m = Model(nps, gps,
