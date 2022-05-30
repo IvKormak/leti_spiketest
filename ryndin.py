@@ -4,10 +4,9 @@ from main import *
 import AERGen as ag
 
 class FlushNeuron(Neuron):
-    def __init__(self, *args, **kwargs):
-        super(FlushNeuron, self).__init__(*args, **kwargs)
+    def __init__(self, model, output_address, inputs, learn=True, weights=None, mask=None):
+        super(FlushNeuron, self).__init__(model, output_address, inputs, learn, weights, mask)
         self.pre = {i: {'potential': 0, 'time': -1} for i in self.inputs}
-
     def reset(self, soft=False):
         self.pre = {_: {'potential': 0, 'time': -1} for _ in self.pre}
         super(FlushNeuron, self).reset(soft)
@@ -39,6 +38,8 @@ class FlushNeuron(Neuron):
 
         if self.param_set.activation_function == "DeltaFunction":
             self.output_level = int(self.input_level > self.param_set.i_thres)
+        if self.param_set.activation_function == "Ramp":
+            self.output_level = int(self.input_level > (random.random()+1)*self.param_set.i_thres)
         if self.output_level:
             self.times_fired += 1
 
@@ -58,12 +59,18 @@ class FlushNeuron(Neuron):
                     self.weights[synapse] -= self.param_set.a_dec
                     if self.weights[synapse] < min_level:
                         self.weights[synapse] = min_level
+            if sum(self.weights.values()) > 255:
+                weights_scale = 255/sum(self.weights.values())
+                self.weights = {k:v*weights_scale for k, v in self.weights.items()}
             self.ltp_times = {}
         return self.output_level
 
-r = [ag.Event(address="i1", position=ag.Position(x=1, y=1), polarity=1, time=0),
-     ag.Event(address="i2", position=ag.Position(x=2, y=1), polarity=1, time=0),
-     ag.Event(address="i3", position=ag.Position(x=3, y=1), polarity=1, time=0)
+r = [ag.Event(address="i1", position=ag.Position(x=1, y=1), polarity=1, time=10),
+     ag.Event(address="i2", position=ag.Position(x=2, y=1), polarity=1, time=10),
+     ag.Event(address="i3", position=ag.Position(x=3, y=1), polarity=1, time=10),
+     ag.Event(address="i6", position=ag.Position(x=1, y=1), polarity=0, time=10),
+     ag.Event(address="i7", position=ag.Position(x=2, y=1), polarity=0, time=10),
+     ag.Event(address="i8", position=ag.Position(x=3, y=1), polarity=0, time=10),
      ]
 
 
@@ -173,6 +180,17 @@ test_cards = [
     ]))
 ]*3
 
+rows = {
+    'left': [construct_trace([[r[0]]])],
+    'center': [construct_trace([[r[1]]])],
+    'right': [construct_trace([[r[2]]])],
+    'left-center': [construct_trace([[r[0], r[1]]])],
+    'center-right': [construct_trace([[r[1], r[2]]])],
+    'left-right': [construct_trace([[r[0], r[2]]])],
+    # 'all': [construct_trace([[r[0], r[1], r[2]]])],
+}
+test_rows = [(k,v[0]) for k,v in rows.items()]*3
+
 def visualize_trace(trace):
     print("num: || time:")
     while trace:
@@ -189,12 +207,12 @@ def visualize_trace(trace):
                 s += ' '
         print(s, " ||", time)
 
-def feed_card(model, card):
+def feed_card(model, card, offset):
     print("="*10)
     time = card[0].time
     time_step = 1
     visualize_trace(card)
-    while card:
+    while card or offset>=0:
         print("time:", time)
         events = [event for event in card if event.time == time]
         card = card[len(events):]
@@ -203,29 +221,32 @@ def feed_card(model, card):
             print('spiked:', ' '.join([o for o in outputs if model.state[o]]))
         model.state = {_:0 for _ in model.state}
         time += time_step
+        if not card:
+            offset -= time_step
     return time-1
 
 
-inputs = [f'i{_}' for _ in range(3)]
-outputs = [f'o{_}' for _ in range(9)]
+inputs = [f'i{_}' for _ in range(1,4)]
+# inputs_depressing = [f'i{_}' for _ in range(4,7)]
+outputs = [f'o{_}' for _ in range(1,10)]
 
-nps = NeuronParametersSet(i_thres=250,
-                          t_ltp=30,
-                          t_refrac=100,
-                          t_inhibit=20,
-                          t_leak=50,
+nps = NeuronParametersSet(i_thres=150,
+                          t_ltp=10,
+                          t_refrac=160,
+                          t_inhibit=10,
+                          t_leak=30,
                           w_min=1,
                           w_max=255,
                           w_random=1,
-                          a_inc=10,
-                          a_dec=2,
+                          a_inc=50,
+                          a_dec=20,
                           activation_function="DeltaFunction")
 gps = GeneralParametersSet(inhibit_radius=1,
                            epoch_length=20,
                            execution_thres=1,
                            terminate_on_epoch=3,
                            wta=0,
-                           false_positive_thres=1,
+                           false_positive_thres=2,
                            mask=None)
 
 m = Model(nps, gps,
@@ -235,21 +256,29 @@ m = Model(nps, gps,
           )
 
 m.layers.append(LayerStruct(shape=[9, 1], per_field_shape=[3, 1],
-                            neurons=[FlushNeuron(m, o, inputs, True, mask=gps.mask)
+                            neurons=[FlushNeuron(                                                model=m, 
+                                                output_address=o, 
+                                                inputs=inputs, 
+                                                learn=True, 
+                                                mask=gps.mask)
                                      for o in outputs]
                             )
                 )
 
 
-seq = [random.choice(list(numbers.keys())) for _ in range(gps.epoch_length)]
-seq = [(num, random.choice(numbers[num])) for num in seq]
+# seq = [random.choice(list(numbers.keys())) for _ in range(gps.epoch_length)]
+# seq = [(num, random.choice(numbers[num])) for num in seq]
+
+seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
+seq = [(num, random.choice(rows[num])) for num in seq]
+test_cards = test_rows
 time_offset = 0
-cooldown = 0
+afterburn = 10
+cooldown = 30
 
 for title, card in seq:
     card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time+time_offset) for e in card]
-    time_offset = feed_card(m, card) + cooldown
-
+    time_offset = feed_card(m, card, afterburn) + cooldown
 reset(m, issoft=True)
 random.shuffle(test_cards)
 for neuron in m.layers[-1].neurons:
@@ -258,9 +287,9 @@ for neuron in m.layers[-1].neurons:
 time_offset = 0
 for title, card in test_cards:
     card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time+time_offset) for e in card]
-    time_offset = feed_card(m, card) + cooldown
+    time_offset = feed_card(m, card,afterburn) + cooldown
 
-label_neurons(m, len(test_cards)/3)
+label_neurons(m, 3)
 for neuron in m.layers[-1].neurons:
     print(neuron.output_address, neuron.label, neuron.error)
     print(neuron.weights)
