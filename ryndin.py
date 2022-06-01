@@ -58,6 +58,10 @@ class FlushNeuron(Neuron):
                     self.weights[synapse] -= self.param_set.a_dec
                     if self.weights[synapse] < min_level:
                         self.weights[synapse] = min_level
+                for synapse in self.inputs:
+                    self.weights[synapse] = self.weights[synapse]*(min_level<self.weights[synapse]<max_level)+
+                        min_level*(min_level>self.weights[synapse])+
+                        max_level*(self.weights[synapse]>max_level)
             self.ltp_times = {}
         return self.output_level
 
