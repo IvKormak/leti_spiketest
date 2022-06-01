@@ -16,7 +16,6 @@ class FlushNeuron(Neuron):
         return {i: int(random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min)) for i in
                 self.inputs}
 
-
     def copy(self, model):
         return FlushNeuron(model, output_address=self.output_address, inputs=self.inputs, learn=self.learn)
 
@@ -48,6 +47,7 @@ class FlushNeuron(Neuron):
             self.times_fired += 1
 
             min_level = self.param_set.w_min
+            max_level = self.param_set.w_max
             self.input_level = 0
             self.model.state[self.output_address] = 1
             self.inhibited_by = self.t_spike + self.param_set.t_refrac
@@ -57,16 +57,14 @@ class FlushNeuron(Neuron):
                 rest = [k for k in self.inputs if k not in not_rotten]
                 for synapse in not_rotten:
                     self.weights[synapse] += self.param_set.a_inc
-                    if self.weights[synapse] > self.weights_mask[synapse]:
-                        self.weights[synapse] = self.weights_mask[synapse]
                 for synapse in rest:
                     self.weights[synapse] -= self.param_set.a_dec
-                    if self.weights[synapse] < min_level:
-                        self.weights[synapse] = min_level
+                if sum(list(self.weights.values())) > max_level:
+                    scale_factor = max_level/sum(list(self.weights.values()))
+                    self.weights = {s: w*scale_factor for s,w in self.weights.items()}
                 for synapse in self.inputs:
-                    self.weights[synapse] = self.weights[synapse]*(min_level<self.weights[synapse]<max_level)+
-                        min_level*(min_level>self.weights[synapse])+
-                        max_level*(self.weights[synapse]>max_level)
+                    self.weights[synapse] = self.weights[synapse]*(min_level<self.weights[synapse]<max_level)+min_level*(min_level>self.weights[synapse])+max_level*(self.weights[synapse]>max_level)
+
             self.ltp_times = {}
         return self.output_level
 
@@ -86,101 +84,6 @@ def construct_trace(events):
     return res
 
 
-numbers = {
-    "one": [
-        construct_trace([
-            [r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-        ]),
-        construct_trace([
-            [r[0], r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-        ])
-    ],
-    "two": [
-        construct_trace([
-            [r[0],r[1],r[2]],
-            [r[2]],
-            [r[0],r[1],r[2]],
-            [r[0]],
-            [r[0],r[1],r[2]],
-        ]),
-        construct_trace([
-            [r[1],r[2]],
-            [r[2]],
-            [r[0],r[1],r[2]],
-            [r[0]],
-            [r[0],r[1],r[2]],
-        ])
-    ],
-    "zero": [
-        construct_trace([
-            [r[0],r[1],r[2]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0],r[1],r[2]],
-        ]),
-        construct_trace([
-            [r[1]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0],r[1],r[2]],
-        ])
-    ]
-}
-
-test_cards = [
-    ("one", construct_trace([
-        [r[1]],
-        [r[2]],
-        [r[1]],
-        [r[1]],
-        [r[1]],
-    ])),
-    ("one", construct_trace([
-        [r[0]],
-        [r[1]],
-        [r[1]],
-        [r[1]],
-        [r[1]],
-    ])),
-    ("two", construct_trace([
-        [r[0],r[1],r[2]],
-        [],
-        [r[0],r[1],r[2]],
-        [r[0]],
-        [r[0],r[1],r[2]],
-    ])),
-    ("two", construct_trace([
-        [r[0],r[1], r[2]],
-        [r[2]],
-        [r[0],r[1],r[2]],
-        [r[0]],
-        [r[0],r[1]],
-    ])),
-    ("zero", construct_trace([
-        [r[0],r[1],r[2]],
-        [r[0], r[2]],
-        [r[0]],
-        [r[0], r[2]],
-        [r[0],r[1],r[2]],
-    ])),
-    ("zero", construct_trace([
-        [r[0], r[1], r[2]],
-        [r[0], r[2]],
-        [r[0], r[2]],
-        [r[0], r[2]],
-        [r[0],r[1]],
-    ]))
-]*3
 
 def visualize_trace(trace):
     print("num: || time:")
@@ -218,7 +121,7 @@ def feed_card(model, card):
 inputs = [f'i{_}' for _ in range(3)]
 outputs = [f'o{_}' for _ in range(9)]
 
-nps = NeuronParametersSet(i_thres=250,
+nps = NeuronParametersSet(i_thres=170,
                           t_ltp=30,
                           t_refrac=100,
                           t_inhibit=20,
