@@ -12,6 +12,11 @@ class FlushNeuron(Neuron):
         self.pre = {_: {'potential': 0, 'time': -1} for _ in self.pre}
         super(FlushNeuron, self).reset(soft)
 
+    def random_weights(self):
+        return {i: int(random.random() * self.param_set.w_random * (self.param_set.w_max - self.param_set.w_min)) for i in
+                self.inputs}
+
+
     def copy(self, model):
         return FlushNeuron(model, output_address=self.output_address, inputs=self.inputs, learn=self.learn)
 
