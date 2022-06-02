@@ -11,7 +11,7 @@ class FlushNeuron(Neuron):
         self.pre = {i: {'potential': 0, 'time': -1} for i in self.inputs}
 
     def random_weights(self):
-        weights = {w: random.random() * (self.param_set.w_max-self.param_set.w_min)+self.param_set.w_min for w in self.inputs}
+        weights = {w: int(random.random() * (self.param_set.w_max-self.param_set.w_min)+self.param_set.w_min) for w in self.inputs}
         return weights
 
     def reset(self, soft=False):
@@ -56,34 +56,46 @@ class FlushNeuron(Neuron):
                               self.ltp_times[k] >= self.t_spike - self.param_set.t_ltp]
                 rest = [k for k in self.inputs if k not in not_rotten]
                 for synapse in not_rotten:
-                    inc = self.param_set.a_inc if self.weights[synapse] > 0 else -self.param_set.a_inc
-                    self.weights[synapse] += inc
+                    self.weights[synapse] += self.param_set.a_inc if self.weights[synapse] > 0 else self.param_set.a_dec
                 for synapse in rest:
-                    dec = self.param_set.a_dec if self.weights[synapse] > 0 else -self.param_set.a_dec
-                    self.weights[synapse] -= dec
+                    self.weights[synapse] -= self.param_set.a_dec if self.weights[synapse] > 0 else self.param_set.a_inc
             self.normalize()
             self.ltp_times = {}
         return self.output_level
 
     def normalize(self):
-        if sum([x for x in self.weights.values() if x > 0]) > self.param_set.w_max:
-            weights_scale = self.param_set.w_max / sum([x for x in self.weights.values() if x > 0])
-            self.weights = {k: v * weights_scale if v > 0 else v for k, v in self.weights.items()}
-        if sum([x for x in self.weights.values() if x < 0]) < self.param_set.w_min:
-            weights_scale = self.param_set.w_min / sum([x for x in self.weights.values() if x < 0])
-            self.weights = {k: v * weights_scale if v < 0 else v for k, v in self.weights.items()}
-
+        # if sum([x for x in self.weights.values() if x > 0]) > self.param_set.w_max:
+        #     weights_scale = self.param_set.w_max / sum([x for x in self.weights.values() if x > 0])
+        #     self.weights = {k: v * weights_scale if v > 0 else v for k, v in self.weights.items()}
+        # if sum([x for x in self.weights.values() if x < 0]) < self.param_set.w_min:
+        #     weights_scale = self.param_set.w_min / sum([x for x in self.weights.values() if x < 0])
+        #     self.weights = {k: v * weights_scale if v < 0 else v for k, v in self.weights.items()}
+        for synapse in self.weights:
+            if self.weights[synapse] < self.param_set.w_min:
+                self.weights[synapse] = self.param_set.w_min
+            if self.weights[synapse] > self.param_set.w_max:
+                self.weights[synapse] = self.param_set.w_max
+            pairs = (['i1', 'i4'],['i2', 'i5'],['i3', 'i6'],)
+            compl = [_ for _ in pairs if synapse in _][0]
+            compl.remove(synapse)
+            compl = compl[0]
+            scale = self.weights[synapse] + self.weights[compl]
+            if scale > self.param_set.w_max:
+                self.weights[synapse] /= scale/self.param_set.w_max
+            if scale < self.param_set.w_min:
+                self.weights[synapse] /= scale/self.param_set.w_min
 
 r = [ag.Event(address="i1", position=ag.Position(x=1, y=1), polarity=1, time=10),
      ag.Event(address="i2", position=ag.Position(x=2, y=1), polarity=1, time=10),
      ag.Event(address="i3", position=ag.Position(x=3, y=1), polarity=1, time=10),
-     ag.Event(address="i6", position=ag.Position(x=1, y=1), polarity=0, time=10),
-     ag.Event(address="i7", position=ag.Position(x=2, y=1), polarity=0, time=10),
-     ag.Event(address="i8", position=ag.Position(x=3, y=1), polarity=0, time=10),
+     ag.Event(address="i4", position=ag.Position(x=1, y=1), polarity=0, time=10),
+     ag.Event(address="i5", position=ag.Position(x=2, y=1), polarity=0, time=10),
+     ag.Event(address="i6", position=ag.Position(x=3, y=1), polarity=0, time=10),
      ]
 
 
-def construct_trace(events):
+def construct_trace(pixels):
+    events = [[r[p] if p+1 in pset else r[p+3] for p in range(3)] for pset in pixels]
     res = []
     dt = 10
     t = events[0][0].time
@@ -92,112 +104,64 @@ def construct_trace(events):
         t += dt
     return res
 
-
-numbers = {
-    "one": [
-        construct_trace([
-            [r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-        ]),
-        construct_trace([
-            [r[0], r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-            [r[1]],
-        ])
-    ],
-    "two": [
-        construct_trace([
-            [r[0], r[1], r[2]],
-            [r[2]],
-            [r[0], r[1], r[2]],
-            [r[0]],
-            [r[0], r[1], r[2]],
-        ]),
-        construct_trace([
-            [r[1], r[2]],
-            [r[2]],
-            [r[0], r[1], r[2]],
-            [r[0]],
-            [r[0], r[1], r[2]],
-        ])
-    ],
-    "zero": [
-        construct_trace([
-            [r[0], r[1], r[2]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0], r[1], r[2]],
-        ]),
-        construct_trace([
-            [r[1]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0], r[2]],
-            [r[0], r[1], r[2]],
-        ])
-    ]
-}
-
-test_cards = [
-                 ("one", construct_trace([
-                     [r[1]],
-                     [r[2]],
-                     [r[1]],
-                     [r[1]],
-                     [r[1]],
-                 ])),
-                 ("one", construct_trace([
-                     [r[0]],
-                     [r[1]],
-                     [r[1]],
-                     [r[1]],
-                     [r[1]],
-                 ])),
-                 ("two", construct_trace([
-                     [r[0], r[1], r[2]],
-                     [],
-                     [r[0], r[1], r[2]],
-                     [r[0]],
-                     [r[0], r[1], r[2]],
-                 ])),
-                 ("two", construct_trace([
-                     [r[0], r[1], r[2]],
-                     [r[2]],
-                     [r[0], r[1], r[2]],
-                     [r[0]],
-                     [r[0], r[1]],
-                 ])),
-                 ("zero", construct_trace([
-                     [r[0], r[1], r[2]],
-                     [r[0], r[2]],
-                     [r[0]],
-                     [r[0], r[2]],
-                     [r[0], r[1], r[2]],
-                 ])),
-                 ("zero", construct_trace([
-                     [r[0], r[1], r[2]],
-                     [r[0], r[2]],
-                     [r[0], r[2]],
-                     [r[0], r[2]],
-                     [r[0], r[1]],
-                 ]))
-             ] * 3
-
 rows = {
-    'left': [construct_trace([[r[0], r[4], r[5]]])],
-    'center': [construct_trace([[r[1], r[3], r[5]]])],
-    'right': [construct_trace([[r[2], r[4], r[3]]])],
-    'left-center': [construct_trace([[r[0], r[1], r[5]]])],
-    'center-right': [construct_trace([[r[1], r[2], r[3]]])],
-    'left-right': [construct_trace([[r[0], r[2], r[4]]])],
-    'all': [construct_trace([[r[0], r[1], r[2]]])],
+    'left': [construct_trace([(1,)])],
+    'center': [construct_trace([(2,)])],
+    'right': [construct_trace([(3,)])],
+    'left-center': [construct_trace([(1,2)])],
+    'center-right': [construct_trace([(2,3)])],
+    'left-right': [construct_trace([(1,3)])],
+   'all': [construct_trace([(1,2,3)])],
 }
+numbers = {
+    'one': [
+        construct_trace([
+            (2,),
+            (2,),
+            (2,),
+            (2,),
+            (2,)
+            ]),
+        construct_trace([
+            (1,2,),
+            (2,),
+            (2,),
+            (2,),
+            (2,)
+            ])
+    ],'two': [
+        construct_trace([
+            (1,2,3,),
+            (3,),
+            (1,2,3,),
+            (1,),
+            (1,2,3,)
+            ]),
+        construct_trace([
+            (2,3,),
+            (3,),
+            (1,2,3,),
+            (1,),
+            (1,2,3,)
+            ])
+    ],'zero': [
+        construct_trace([
+            (1,2,3,),
+            (1,3,),
+            (1,3,),
+            (1,3,),
+            (1,2,3,)
+            ]),
+        construct_trace([
+            (1,2,3,),
+            (1,3,),
+            (1,3,),
+            (3,),
+            (1,2,3,)
+            ])
+    ],
+}
+
 test_rows = [(k, v[0]) for k, v in rows.items()] * 3
 
 
@@ -236,27 +200,26 @@ def feed_card(model, card, offset):
             offset -= time_step
     return time - 1
 
-
 inputs = [f'i{_}' for _ in range(1, 7)]
 outputs = [f'o{_}' for _ in range(1, 10)]
 
-nps = NeuronParametersSet(i_thres=50,
-                          t_ltp=10,
-                          t_refrac=40,
-                          t_inhibit=10,
+nps = NeuronParametersSet(i_thres=125,
+                          t_ltp=5,
+                          t_refrac=0,
+                          t_inhibit=0,
                           t_leak=5,
                           w_min=-127,
                           w_max=128,
                           w_random=1,
-                          a_inc=20,
-                          a_dec=2,
+                          a_inc=15,
+                          a_dec=5,
                           activation_function="DeltaFunction")
 gps = GeneralParametersSet(inhibit_radius=1,
                            epoch_length=50,
                            execution_thres=1,
                            terminate_on_epoch=3,
                            wta=0,
-                           false_positive_thres=0.5,
+                           false_positive_thres=0.3,
                            mask=None)
 
 m = Model(nps, gps,
@@ -275,15 +238,15 @@ m.layers.append(LayerStruct(shape=[9, 1], per_field_shape=[3, 1],
                             )
                 )
 
-# seq = [random.choice(list(numbers.keys())) for _ in range(gps.epoch_length)]
-# seq = [(num, random.choice(numbers[num])) for num in seq]
+seq = [random.choice(list(numbers.keys())) for _ in range(gps.epoch_length)]
+seq = [(num, random.choice(numbers[num])) for num in seq]
 
-seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
-seq = [(num, random.choice(rows[num])) for num in seq]
+# seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
+# seq = [(num, random.choice(rows[num])) for num in seq]
 test_cards = test_rows
 time_offset = 0
 afterburn = 0
-cooldown = 10
+cooldown = 150
 
 for title, card in seq:
     card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e in
@@ -302,5 +265,6 @@ for title, card in test_cards:
 
 label_neurons(m, 3)
 for neuron in m.layers[-1].neurons:
-    print(neuron.output_address, neuron.label, neuron.error)
-    print(neuron.weights)
+    if neuron.label:
+        print(neuron.output_address, neuron.label, neuron.error)
+        print(neuron.weights)
