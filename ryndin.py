@@ -81,9 +81,9 @@ class FlushNeuron(Neuron):
             compl = compl[0]
             scale = self.weights[synapse] + self.weights[compl]
             if scale > self.param_set.w_max:
-                self.weights[synapse] /= scale/self.param_set.w_max
+                self.weights[synapse] = int(self.weights[synapse]/scale*self.param_set.w_max)
             if scale < self.param_set.w_min:
-                self.weights[synapse] /= scale/self.param_set.w_min
+                self.weights[synapse] = int(self.weights[synapse]/scale*self.param_set.w_min)
 
 r = [ag.Event(address="i1", position=ag.Position(x=1, y=1), polarity=1, time=10),
      ag.Event(address="i2", position=ag.Position(x=2, y=1), polarity=1, time=10),
