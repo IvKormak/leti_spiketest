@@ -348,7 +348,6 @@ def label_neurons(model, category_appearance):
     neuron_journals, teacher_journals = zip(*model.logs)
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
-    print(neuron_journals, teacher_journals)
 
     R = [[] for _ in all_neurons]
     C = []
@@ -366,7 +365,6 @@ def label_neurons(model, category_appearance):
         for n in range(len(R)):
             R[n].append(int(all_neurons[n] in neurons_for_segment))
         segment_start = segment_end
-    print(R,C)
 
     #for fired_neuron, right_answer in zip(neuron_journals, teacher_journals):
     #    C.append([1j if i != all_traces.index(right_answer) else 1 for i in range(len(R))])
@@ -375,9 +373,6 @@ def label_neurons(model, category_appearance):
 
     R, C = np.array(R), np.array(C)
     F = np.matmul(R, C)
-
-    print(all_traces)
-    print(F)
 
     # recognition error after doi:10.1109/ijcnn.2017.7966336
     weighted_error = lambda x: (category_appearance - np.real(x)) / category_appearance + np.imag(x) / (
