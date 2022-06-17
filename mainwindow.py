@@ -490,11 +490,11 @@ class ReckognizerWorker(QObject):
         self.lut = {synapse:
                         [neuron.label for neuron in self.model.layers[-1]["neurons"]
                          if neuron.output_address == synapse][0]
-                    for synapse in self.model.outputs}
+                    for synapse in self.model.perceptron_outputs}
 
     def reckognize_frame(self):
         self.events.emit(self.feed.next_events(peek=True), self.model.layers[-1].per_field_shape)
-        fired_neurons = [self.lut[synapse] for synapse in self.model.outputs if self.model.state[synapse]]
+        fired_neurons = [self.lut[synapse] for synapse in self.model.perceptron_outputs if self.model.state[synapse]]
         for label in fired_neurons:
             self.neuron_signals[label] = self.time
         self.neuron_signals = {k:v for k,v in self.neuron_signals.items() if v > self.time-self.timewindow}

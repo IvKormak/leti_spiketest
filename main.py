@@ -12,6 +12,7 @@ import AERGen as ag
 import random
 import os
 import csv
+import sqlite3 as sq3
 from concurrent import futures
 from utility import *
 
@@ -187,9 +188,7 @@ class Neuron:
         return self.output_level
 
     def inhibit(self):
-        if self.inhibited_by > self.model.time and self.output_level:
-            self.inhibited_by += self.param_set.t_inhibit
-        else:
+        if self.inhibited_by <= self.model.time:
             self.inhibited_by = self.model.time + self.param_set.t_inhibit
 
     def reset(self, soft=False):
@@ -259,7 +258,7 @@ def construct_network(feed_type, source_file, learn=True, update_neuron_paramete
     layer = ""
     for layer in structure:
         model.state.update({s: 0 for s in config[layer]["inputs"].split(' ')})
-        if config[layer]["type"] == "perceptron_layer":
+        if config[layer]["type"] == "layer":
             model.layers.append(LayerStruct([Neuron(model, output, config[layer]["inputs"].split(' '), learn, mask=mask)
                                              for output in config[layer]["outputs"].split(' ')],
                                             tuple(map(int, config[layer]["shape"].split(' '))),
@@ -378,7 +377,14 @@ def label_neurons(model, category_appearance):
     weighted_error = lambda x: (category_appearance - np.real(x)) / category_appearance + np.imag(x) / (
             (len(C) - 1) * category_appearance)
 
-    recognition_error = {all_neurons[i]: weighted_error(r.max()) for i, r in enumerate(F)}
+    recognition_error = {}
+    for i, r in enumerate(F):
+        recognition_error[all_neurons[i]] = weighted_error(r.max())
+        print(category_appearance, all_neurons[i], recognition_error[all_neurons[i]])
+        if np.isnan(recognition_error[all_neurons[i]]):
+            recognition_error[all_neurons[i]] = 9999
+
+
     rename_dict = {all_neurons[i]: os.path.basename(all_traces[np.where(r == r.max())[0][0]]) for i, r in enumerate(F)
                    if recognition_error[all_neurons[i]] < model.general_parameters_set.false_positive_thres}
 
@@ -394,46 +400,38 @@ def label_neurons(model, category_appearance):
     return {'labels': countlabels, 'recognition_error': recognition_error}
 
 
-def select_weights_from_pool(layers_pool, dup_thres):
-    learnt_categories = {}
-    neuron_pool = np.array(layers_pool).flatten()
-    for n in neuron_pool:
-        if n.label:
-            if n.label in learnt_categories:
-                if learnt_categories[n.label]['count'] < dup_thres:
-                    learnt_categories[n.label]['ids'].append(id(n))
-                    learnt_categories[n.label]['weights'].append(n.weights)
-                    learnt_categories[n.label]['count'] += 1
-            else:
-                learnt_categories[n.label] = {}
-                learnt_categories[n.label]['ids'] = [id(n), ]
-                learnt_categories[n.label]['weights'] = [n.weights, ]
-                learnt_categories[n.label]['count'] = 1
-    return learnt_categories
+def select_weights_from_pool(model, layers_pool):
+    neuron_pool = {}
+    for neuron in np.array(layers_pool).flatten():
+        if neuron.label:
+            if neuron.label not in neuron_pool:
+                neuron_pool[neuron.label] = []
+            neuron_pool[neuron.label].append((neuron, neuron.error))
+
+    neurons = {k: sorted(v, key=lambda x: x[1])[:model.general_parameters_set.execution_thres]
+               for k, v in neuron_pool.items()}
+
+    return neurons
 
 
 def fill_model_from_pool(model: Model, training_pool: [Model]):
     for i, layer in enumerate(model.layers):
         layers_pool = [m.layers[i].neurons for m in training_pool]
-        learnt = select_weights_from_pool(layers_pool, model.general_parameters_set.execution_thres)
-        already_there = set([neuron.label for neuron in layer.neurons if neuron.label])
-        already_there_count = {k: [n.label for n in layer.neurons].count(k) for k in already_there}
+        learnt = select_weights_from_pool(model, layers_pool)
 
-        for k in already_there:
-            if k in learnt:
-                learnt[k]['count'] -= already_there_count[k]
-
-        select = []
         free_neurons = [neuron for neuron in layer.neurons if not neuron.label]
 
-        for label, e in learnt.items():
-            if e['count'] > 0:
-                for i in range(e['count']):
-                    select.append((e['weights'][i], label))
+        select = []
 
-        for recipient, (graft, label) in zip(free_neurons, select):
-            recipient.set_weights(graft)
-            recipient.label = label
+        for i in range(max(list(map(len, list(learnt.items()))))):
+            for label, neurons in learnt.items():
+                if neurons:
+                    select.append(neurons.pop())
+
+        for recipient, (graft, error) in zip(free_neurons, select):
+            recipient.set_weights(graft.weights)
+            recipient.error = error
+            recipient.label = graft.label
 
         already_there = set([neuron.label for neuron in layer.neurons if neuron.label])
         already_there_count = {k: [n.label for n in layer.neurons].count(k) for k in already_there}
@@ -441,14 +439,20 @@ def fill_model_from_pool(model: Model, training_pool: [Model]):
     return already_there_count
 
 
-def delete_duplicate_neurons(model, countlabels):
+def delete_duplicate_neurons(model):
+    neurons = {}
     for neuron in model.layers[-1].neurons:
         if neuron.label:
-            if countlabels[neuron.label] > model.general_parameters_set.execution_thres:
-                countlabels[neuron.label] -= 1
-                neuron.reset()
-                neuron.learn = True
-
+            if neuron.label not in neurons:
+                neurons[neuron.label] = []
+            neurons[neuron.label].append((neuron, neuron.error))
+    neurons = {k: sorted(v, key=lambda x: x[1])[:-model.general_parameters_set.execution_thres]
+               for k,v in neurons.items()}
+    trash = [_[0] for sub in neurons.values() for _ in sub ]
+    for ne in trash:
+        ne.reset()
+        ne.learn = True
+    return {k:len(v) for k,v in neurons.items()}
 
 def glue_attention_maps(model, folder):
     res = np.ndarray([model.layers[-1].per_field_shape[0] * model.layers[-1].shape[0], 0])
@@ -502,34 +506,18 @@ def reset(model, feed=None, issoft=False):
 
 if __name__ == "__main__":
 
-    def train(model_and_feed):
-        model, feed, id = model_and_feed
-
-        t = time.time()
-        for alias, dataset in datasets:
-            feed.load(alias, dataset)
-            while next_training_cycle(model, feed):
-                pass
-        t = time.time()
-        feed_test_trace_set(model, feed, TEST_SETS)
-        r = label_neurons(model, len(TEST_SETS) / 8)
-        return {'log': [id, r], 'model': model}
-
-
-    model_file = "resources/models/network3_c.txt"
-
     general_variations = [{"wta": "0",
                            "mask": "none"
-                           },
-                          {"wta": "1",
-                           "mask": "resources/mask-42.bmp"
                            },
                           {"wta": "0",
                            "mask": "resources/mask-42.bmp"
                            },
                           {"wta": "1",
                            "mask": "none"
-                           }
+                           },
+                          {"wta": "1",
+                           "mask": "resources/mask-42.bmp"
+                           },
                           ]
 
     neuron_variations = {
@@ -542,173 +530,356 @@ if __name__ == "__main__":
         "t_inhibit": ["100", "300", "700", "1000"],
     }
 
-    datasets = []
-    chosenSets = [random.choice(["traces/b-t-500.bin",
-                                 "traces/bl-tr-500.bin",
-                                 "traces/br-tl-500.bin",
-                                 "traces/l-r-500.bin",
-                                 "traces/r-l-500.bin",
-                                 "traces/t-b-500.bin",
-                                 "traces/tl-br-500.bin",
-                                 "traces/tr-bl-500.bin"
-                                 ]) for _ in range(50)]
-    for path in chosenSets:
-        with open(path, 'r') as f:
-            datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
-            
-    for i in range(5):
-        template_model = construct_network("iter", "resources/models/network3_c.txt")[0]
-        print(f"model {i} of 5")
-        models_and_feeds = []
-        alias_id = {}
-        id = 0
-        for gpv in general_variations:  # [{"wta": "0","mask": "none"}]:#
-            for parameter in neuron_variations:
-                for var in neuron_variations[parameter]:
-                    neuron_params = {k: neuron_variations[k][0] if k != parameter else var for k in neuron_variations}
-                    new_model, new_feed = construct_network("iter",
-                                                            model_file,
-                                                            update_neuron_parameters=neuron_params,
-                                                            update_general_parameters=gpv
-                                                            )
-                    for n, nn in zip(template_model.layers[0].neurons, new_model.layers[0].neurons):
-                        nn.set_weights(n.weights)
-                    models_and_feeds.append([new_model, new_feed])
-                    gpvc = gpv.copy()
-                    gpvc.update({parameter: var})
-                    alias_id[id] = gpvc
-                    models_and_feeds[-1].append(str(id))
-                    id += 1
-        experiment_id = 1
-        while os.path.isdir(f"experiments_results/experiment_same_data{experiment_id}"):
-            experiment_id += 1
-        os.mkdir(f"experiments_results/experiment_same_data{experiment_id}")
-        #pool = futures.ThreadPoolExecutor(max_workers=os.cpu_count())
-        pool = futures.ThreadPoolExecutor(max_workers=1)
-        results = pool.map(train, models_and_feeds)
+    alias_id = {}
+
+    m_id = 0
+    for gpv in general_variations:  # [{"wta": "0","mask": "none"}]:#
+        for parameter in neuron_variations:
+            for var in neuron_variations[parameter]:
+                neuron_params = {k: neuron_variations[k][0] if k != parameter else var for k in neuron_variations}
+                gpvc = gpv.copy()
+                gpvc.update({parameter: var})
+                alias_id[m_id] = gpvc
+                m_id += 1
+    experiments = ["C:\\leti_spiketest\\experiments_results\\experiment_same_model4\\",
+                   "C:\\leti_spiketest\\experiments_results\\experiment_same_model5\\",]
+    tbl = ["ex4_model",
+           "ex5_model",
+]
+
+    for basepath, table in zip(experiments, tbl):
+
         text = {'ids': alias_id, 'data': []}
-        for res in results:
-            os.mkdir(f"experiments_results/experiment_same_data{experiment_id}/{res['log'][0]}/")
-            with open(f"experiments_results/experiment_same_data{experiment_id}/{res['log'][0]}/model.pkl", "wb") as f:
-                pickle.dump(res['model'], f)
-            text['data'].append(res['log'])
-        with open(f'experiments_results/experiment_same_data{experiment_id}/data.csv', 'w') as f:
-            labels = {"b-t-500.bin":0,
-                      "bl-tr-500.bin":0,
-                      "br-tl-500.bin":0,
-                      "l-r-500.bin":0,
-                      "r-l-500.bin":0,
-                      "t-b-500.bin":0,
-                      "tl-br-500.bin":0,
-                      "tr-bl-500.bin":0
-                      }
-            va = ""
-            fieldnames = ["id", "parameters", "variable", "trace_count", "max_trace", "recognition_error_mean",
-                          "labels"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
-            writer.writeheader()
-            for entry in text['data']:
-                id = entry[0]
-                param = text['ids'][int(id)]
-                va = text['ids'][int(id)][[key for key in text['ids'][int(id)].keys() if key not in ['wta', 'mask']][0]]
-                tc = len(entry[1]['labels'])
-                if len(entry[1]['labels']):
-                    mx = max(entry[1]['labels'].values())
-                else:
-                    mx = 0
-                mean = sum(entry[1]['recognition_error'].values()) / len(entry[1]['recognition_error'])
-                nlab = labels.copy()
-                nlab.update(entry[1]['labels'])
-                writer.writerow({"id": id,
-                                 "parameters": param,
-                                 "variable": va,
-                                 "trace_count": tc,
-                                 "max_trace": mx,
-                                 "recognition_error_mean": mean,
-                                 "labels": nlab})
+        query = f"""CREATE TABLE IF NOT EXISTS "{table}" (
+        	"id"	INTEGER,
+        	"parameters"	TEXT,
+        	"variable_name" TEXT,
+        	"variable"	INTEGER,
+        	"trace_count"	INTEGER,
+        	"max_trace"	INTEGER,
+        	"recognition_error_mean"	REAL,
+        	"labels"	TEXT
+        );"""
+        i=0
+        while os.path.isdir(path := f"{basepath}{i}"):
+            model_file = f"{path}\model.pkl"
+            model = load_network(model_file)
+            feed = DataFeed('iter', model)
+            feed_test_trace_set(model, feed, TEST_SETS)
+            r = label_neurons(model, len(TEST_SETS) / 8)
 
+            text['data'].append([i, r])
+            i += 1
+            print(i)
 
-    template_model = construct_network("iter", "resources/models/network3_c.txt")[0]
+        conn = sq3.connect("experiments_results/experiments.db")
+        cursor = conn.cursor()
+        cursor.execute(query)
+        conn.commit()
 
-    for i in range(5):
-        datasets = []
-        chosenSets = [random.choice(["traces/b-t-500.bin",
-                                     "traces/bl-tr-500.bin",
-                                     "traces/br-tl-500.bin",
-                                     "traces/l-r-500.bin",
-                                     "traces/r-l-500.bin",
-                                     "traces/t-b-500.bin",
-                                     "traces/tl-br-500.bin",
-                                     "traces/tr-bl-500.bin"
-                                     ]) for _ in range(50)]
-        for path in chosenSets:
-            with open(path, 'r') as f:
-                datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+        labels = {"b-t-500.bin": 0,
+                  "bl-tr-500.bin":0,
+                  "br-tl-500.bin":0,
+                  "l-r-500.bin":0,
+                  "r-l-500.bin":0,
+                  "t-b-500.bin":0,
+                  "tl-br-500.bin":0,
+                  "tr-bl-500.bin":0
+                  }
 
-        print(f"model {i} of 5")
-        models_and_feeds = []
-        alias_id = {}
-        id = 0
-        for gpv in general_variations:  # [{"wta": "0","mask": "none"}]:#
-            for parameter in neuron_variations:
-                for var in neuron_variations[parameter]:
-                    neuron_params = {k: neuron_variations[k][0] if k != parameter else var for k in neuron_variations}
-                    new_model, new_feed = construct_network("iter",
-                                                            model_file,
-                                                            update_neuron_parameters=neuron_params,
-                                                            update_general_parameters=gpv
-                                                            )
-                    for n, nn in zip(template_model.layers[0].neurons, new_model.layers[0].neurons):
-                        nn.set_weights(n.weights)
-                    models_and_feeds.append([new_model, new_feed])
-                    gpvc = gpv.copy()
-                    gpvc.update({parameter: var})
-                    alias_id[id] = gpvc
-                    models_and_feeds[-1].append(str(id))
-                    id += 1
-        experiment_id = 1
-        while os.path.isdir(f"experiments_results/experiment_same_model{experiment_id}"):
-            experiment_id += 1
-        os.mkdir(f"experiments_results/experiment_same_model{experiment_id}")
-        pool = futures.ThreadPoolExecutor(max_workers=os.cpu_count())
-        results = pool.map(train, models_and_feeds)
-        text = {'ids': alias_id, 'data': []}
-        for res in results:
-            os.mkdir(f"experiments_results/experiment_same_model{experiment_id}/{res['log'][0]}/")
-            with open(f"experiments_results/experiment_same_model{experiment_id}/{res['log'][0]}/model.pkl", "wb") as f:
-                pickle.dump(res['model'], f)
-            text['data'].append(res['log'])
-        with open(f'experiments_results/experiment_same_model{experiment_id}/data.csv', 'w') as f:
-            labels = {"b-t-500.bin": 0,
-                      "bl-tr-500.bin": 0,
-                      "br-tl-500.bin": 0,
-                      "l-r-500.bin": 0,
-                      "r-l-500.bin": 0,
-                      "t-b-500.bin": 0,
-                      "tl-br-500.bin": 0,
-                      "tr-bl-500.bin": 0
-                      }
-            va = ""
-            fieldnames = ["id", "parameters", "variable", "trace_count", "max_trace", "recognition_error_mean",
-                          "labels"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter=';')
-            writer.writeheader()
-            for entry in text['data']:
-                id = entry[0]
-                param = text['ids'][int(id)]
-                va = text['ids'][int(id)][[key for key in text['ids'][int(id)].keys() if key not in ['wta', 'mask']][0]]
-                tc = len(entry[1]['labels'])
-                if len(entry[1]['labels']):
-                    mx = max(entry[1]['labels'].values())
-                else:
-                    mx = 0
-                mean = sum(entry[1]['recognition_error'].values()) / len(entry[1]['recognition_error'])
-                nlab = labels.copy()
-                nlab.update(entry[1]['labels'])
-                writer.writerow({"id": id,
-                                 "parameters": param,
-                                 "variable": va,
-                                 "trace_count": tc,
-                                 "max_trace": mx,
-                                 "recognition_error_mean": mean,
-                                 "labels": nlab})
+        for entry in text['data']:
+            entry_id = int(entry[0])
+            param = text['ids'][entry_id]
+            va_name = [key for key in text['ids'][entry_id].keys() if key not in ['wta', 'mask']][0]
+            va = text['ids'][entry_id][va_name]
+            tc = len(entry[1]['labels'])
+            if len(entry[1]['labels']):
+                mx = max(entry[1]['labels'].values())
+            else:
+                mx = 0
+            mean = sum(entry[1]['recognition_error'].values()) / len(entry[1]['recognition_error'])
+            nlab = labels.copy()
+            nlab.update(entry[1]['labels'])
+
+            query = f"""INSERT INTO {table}(
+            id,
+            parameters,
+            variable_name,
+            variable,
+            trace_count,
+            max_trace,
+            recognition_error_mean,
+            labels) VALUES (
+            {entry_id},
+            "{param}",
+            "{va_name}",
+            "{va}",
+            {tc},
+            {mx},
+            {mean},
+            "{labels}"
+            ) """
+            cursor.execute(query)
+        conn.commit()
+#     def train(model_and_feed):
+#         model, feed, model_id = model_and_feed
+#
+#         t = time.time()
+#         n = 0
+#         for alias, dataset in datasets:
+#             print(n)
+#             n+=1
+#             feed.load(alias, dataset)
+#             while next_training_cycle(model, feed):
+#                 pass
+#         t = time.time()
+#         feed_test_trace_set(model, feed, TEST_SETS)
+#         r = label_neurons(model, len(TEST_SETS) / 8)
+#         return {'log': [model_id, r], 'model': model}
+#
+#     conn = sq3.connect("experiments_results/experiments.db")
+#     cursor = conn.cursor()
+#
+#     model_file = "resources/models/network3_c.txt"
+#
+#     general_variations = [{"wta": "0",
+#                            "mask": "none"
+#                            },
+#                           {"wta": "0",
+#                            "mask": "resources/mask-42.bmp"
+#                            },
+#                           {"wta": "1",
+#                            "mask": "none"
+#                            },
+#                           {"wta": "1",
+#                            "mask": "resources/mask-42.bmp"
+#                            },
+#                           ]
+#
+#     neuron_variations = {
+#         "a_inc": ['70', '100', '125', '200'],
+#         "a_dec": ["20", "40", "60", "80"],
+#         "w_max": ["700", "900", "1100", "1300"],
+#         "t_refrac": ["7000", "9000", "10000", "12000"],
+#         "i_thres": ["8000", "10000", "12500", "15000"],
+#         "t_ltp": ["1000", "1600", "2300", "3000"],
+#         "t_inhibit": ["100", "300", "700", "1000"],
+#     }
+#
+#     datasets = []
+#     chosenSets = [random.choice(["traces/b-t-500.bin",
+#                                  "traces/bl-tr-500.bin",
+#                                  "traces/br-tl-500.bin",
+#                                  "traces/l-r-500.bin",
+#                                  "traces/r-l-500.bin",
+#                                  "traces/t-b-500.bin",
+#                                  "traces/tl-br-500.bin",
+#                                  "traces/tr-bl-500.bin"
+#                                  ]) for _ in range(50)]
+#     for path in chosenSets:
+#         with open(path, 'r') as f:
+#             datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+#
+#     for i in range(2,6):
+#         table = f"ex{i}_data"
+#         query = f"""CREATE TABLE "{table}" (
+# 	"id"	INTEGER,
+# 	"parameters"	TEXT,
+# 	"variable_name" TEXT,
+# 	"variable"	INTEGER,
+# 	"trace_count"	INTEGER,
+# 	"max_trace"	INTEGER,
+# 	"recognition_error_mean"	REAL,
+# 	"labels"	TEXT
+# );"""
+#         cursor.execute(query)
+#         template_model = construct_network("iter", "resources/models/network3_c.txt")[0]
+#         print(f"model {i} of 10")
+#         models_and_feeds = []
+#         alias_id = {}
+#         m_id= 0
+#         for gpv in general_variations:  # [{"wta": "0","mask": "none"}]:#
+#             for parameter in neuron_variations:
+#                 for var in neuron_variations[parameter]:
+#                     neuron_params = {k: neuron_variations[k][0] if k != parameter else var for k in neuron_variations}
+#                     new_model, new_feed = construct_network("iter",
+#                                                             model_file,
+#                                                             update_neuron_parameters=neuron_params,
+#                                                             update_general_parameters=gpv
+#                                                             )
+#                     for n, nn in zip(template_model.layers[0].neurons, new_model.layers[0].neurons):
+#                         nn.set_weights(n.weights)
+#                     models_and_feeds.append([new_model, new_feed])
+#                     gpvc = gpv.copy()
+#                     gpvc.update({parameter: var})
+#                     alias_id[m_id] = gpvc
+#                     models_and_feeds[-1].append(str(m_id))
+#                     m_id += 1
+#         experiment_id = 1
+#         print(2)
+#         while os.path.isdir(f"experiments_results/experiment_same_data{experiment_id}"):
+#             experiment_id += 1
+#         os.mkdir(f"experiments_results/experiment_same_data{experiment_id}")
+#         pool = futures.ThreadPoolExecutor(max_workers=os.cpu_count())
+#         results = pool.map(train, models_and_feeds)
+#         text = {'ids': alias_id, 'data': []}
+#         print(3)
+#         for res in results:
+#             os.mkdir(f"experiments_results/experiment_same_data{experiment_id}/{res['log'][0]}/")
+#             with open(f"experiments_results/experiment_same_data{experiment_id}/{res['log'][0]}/model.pkl", "wb") as f:
+#                 pickle.dump(res['model'], f)
+#             text['data'].append(res['log'])
+#
+#
+#         labels = {"b-t-500.bin":0,
+#                   "bl-tr-500.bin":0,
+#                   "br-tl-500.bin":0,
+#                   "l-r-500.bin":0,
+#                   "r-l-500.bin":0,
+#                   "t-b-500.bin":0,
+#                   "tl-br-500.bin":0,
+#                   "tr-bl-500.bin":0
+#                   }
+#         va = ""
+#         print(4)
+#         for entry in text['data']:
+#             entry_id = int(entry[0])
+#             param = text['ids'][entry_id]
+#             va_name = [key for key in text['ids'][entry_id].keys() if key not in ['wta', 'mask']][0]
+#             va = text['ids'][entry_id][va_name]
+#             tc = len(entry[1]['labels'])
+#             if len(entry[1]['labels']):
+#                 mx = max(entry[1]['labels'].values())
+#             else:
+#                 mx = 0
+#             mean = sum(entry[1]['recognition_error'].values()) / len(entry[1]['recognition_error'])
+#             nlab = labels.copy()
+#             nlab.update(entry[1]['labels'])
+#
+#             query = f"""INSERT INTO {table}(
+#             id,
+#             parameters,
+#             variable_name,
+#             variable,
+#             trace_count,
+#             max_trace,
+#             recognition_error_mean,
+#             labels) VALUES (
+#             {entry_id},
+#             "{param}",
+#             "{va_name}",
+#             "{va}",
+#             {tc},
+#             {mx},
+#             {mean},
+#             "{labels}"
+#             ) """
+#             cursor.execute(query)
+#         conn.commit()
+#
+#
+#     template_model = construct_network("iter", "resources/models/network3_c.txt")[0]
+#
+#     for i in range(1,6):
+#         query = f"""CREATE TABLE "ex{i}_model" (
+#         	"id"	INTEGER,
+#         	"parameters"	TEXT,
+#         	"variable_name" TEXT,
+#         	"variable"	INTEGER,
+#         	"trace_count"	INTEGER,
+#         	"max_trace"	INTEGER,
+#         	"recognition_error_mean"	REAL,
+#         	"labels"	TEXT
+#         );"""
+#         cursor.execute(query)
+#         datasets = []
+#         chosenSets = [random.choice(["traces/b-t-500.bin",
+#                                      "traces/bl-tr-500.bin",
+#                                      "traces/br-tl-500.bin",
+#                                      "traces/l-r-500.bin",
+#                                      "traces/r-l-500.bin",
+#                                      "traces/t-b-500.bin",
+#                                      "traces/tl-br-500.bin",
+#                                      "traces/tr-bl-500.bin"
+#                                      ]) for _ in range(50)]
+#         for path in chosenSets:
+#             with open(path, 'r') as f:
+#                 datasets.append((path, [ag.aer_decode(ev) for ev in f.readline().split(' ')]))
+#
+#         print(f"model {i+5} of 10")
+#         models_and_feeds = []
+#         alias_id = {}
+#         m_id = 0
+#         for gpv in general_variations:  # [{"wta": "0","mask": "none"}]:#
+#             for parameter in neuron_variations:
+#                 for var in neuron_variations[parameter]:
+#                     neuron_params = {k: neuron_variations[k][0] if k != parameter else var for k in neuron_variations}
+#                     new_model, new_feed = construct_network("iter",
+#                                                             model_file,
+#                                                             update_neuron_parameters=neuron_params,
+#                                                             update_general_parameters=gpv
+#                                                             )
+#                     for n, nn in zip(template_model.layers[0].neurons, new_model.layers[0].neurons):
+#                         nn.set_weights(n.weights)
+#                     models_and_feeds.append([new_model, new_feed])
+#                     gpvc = gpv.copy()
+#                     gpvc.update({parameter: var})
+#                     alias_id[m_id] = gpvc
+#                     models_and_feeds[-1].append(str(m_id))
+#                     m_id += 1
+#         experiment_id = 1
+#         while os.path.isdir(f"experiments_results/experiment_same_model{experiment_id}"):
+#             experiment_id += 1
+#         os.mkdir(f"experiments_results/experiment_same_model{experiment_id}")
+#         pool = futures.ThreadPoolExecutor(max_workers=os.cpu_count())
+#         results = pool.map(train, models_and_feeds)
+#         text = {'ids': alias_id, 'data': []}
+#         for res in results:
+#             os.mkdir(f"experiments_results/experiment_same_model{experiment_id}/{res['log'][0]}/")
+#             with open(f"experiments_results/experiment_same_model{experiment_id}/{res['log'][0]}/model.pkl", "wb") as f:
+#                 pickle.dump(res['model'], f)
+#             text['data'].append(res['log'])
+#         labels = {"b-t-500.bin": 0,
+#                   "bl-tr-500.bin": 0,
+#                   "br-tl-500.bin": 0,
+#                   "l-r-500.bin": 0,
+#                   "r-l-500.bin": 0,
+#                   "t-b-500.bin": 0,
+#                   "tl-br-500.bin": 0,
+#                   "tr-bl-500.bin": 0
+#                   }
+#         va = ""
+#         for entry in text['data']:
+#             entry_id = int(entry[0])
+#             param = text['ids'][entry_id]
+#             va_name = [key for key in text['ids'][entry_id].keys() if key not in ['wta', 'mask']][0]
+#             va = text['ids'][entry_id][va_name]
+#             tc = len(entry[1]['labels'])
+#             if len(entry[1]['labels']):
+#                 mx = max(entry[1]['labels'].values())
+#             else:
+#                 mx = 0
+#             mean = sum(entry[1]['recognition_error'].values()) / len(entry[1]['recognition_error'])
+#             nlab = labels.copy()
+#             nlab.update(entry[1]['labels'])
+#
+#             query = f"""INSERT INTO ex{i}_data(
+#                     id,
+#                     parameters,
+#                     variable_name,
+#                     variable,
+#                     trace_count,
+#                     max_trace,
+#                     recognition_error_mean,
+#                     labels) VALUES (
+#                     {entry_id},
+#                     "{param}",
+#                     "{va_name}",
+#                     "{va}",
+#                     {tc},
+#                     {mx},
+#                     {mean},
+#                     "{labels}"
+#                     ) """
+#             cursor.execute(query)
+#         conn.commit()
