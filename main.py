@@ -114,9 +114,12 @@ class Model:
 
 
 class Neuron:
-    def __init__(self, model, output_address, inputs, learn=True, weights=None, mask=None):
+    def __init__(self, model, output_address, inputs, learn=True, weights=None, mask=None, neuron_parameters_set=None):
         self.model = model
-        self.param_set = model.neuron_parameters_set
+        if neuron_parameters_set is None:
+            self.param_set = model.neuron_parameters_set
+        else:
+            self.param_set = neuron_parameters_set
         self.error = -1
         self.output_address = output_address
         self.learn = learn
@@ -380,7 +383,6 @@ def label_neurons(model, category_appearance):
     recognition_error = {}
     for i, r in enumerate(F):
         recognition_error[all_neurons[i]] = weighted_error(r.max())
-        print(category_appearance, all_neurons[i], recognition_error[all_neurons[i]])
         if np.isnan(recognition_error[all_neurons[i]]):
             recognition_error[all_neurons[i]] = 9999
 
@@ -418,23 +420,23 @@ def fill_model_from_pool(model: Model, training_pool: [Model]):
     for i, layer in enumerate(model.layers):
         layers_pool = [m.layers[i].neurons for m in training_pool]
         learnt = select_weights_from_pool(model, layers_pool)
+        if learnt:
+            free_neurons = [neuron for neuron in layer.neurons if not neuron.label]
 
-        free_neurons = [neuron for neuron in layer.neurons if not neuron.label]
+            select = []
 
-        select = []
+            for i in range(max(list(map(len, list(learnt.items()))))):
+                for label, neurons in learnt.items():
+                    if neurons:
+                        select.append(neurons.pop())
 
-        for i in range(max(list(map(len, list(learnt.items()))))):
-            for label, neurons in learnt.items():
-                if neurons:
-                    select.append(neurons.pop())
+            for recipient, (graft, error) in zip(free_neurons, select):
+                recipient.set_weights(graft.weights)
+                recipient.error = error
+                recipient.label = graft.label
 
-        for recipient, (graft, error) in zip(free_neurons, select):
-            recipient.set_weights(graft.weights)
-            recipient.error = error
-            recipient.label = graft.label
-
-        already_there = set([neuron.label for neuron in layer.neurons if neuron.label])
-        already_there_count = {k: [n.label for n in layer.neurons].count(k) for k in already_there}
+            already_there = set([neuron.label for neuron in layer.neurons if neuron.label])
+            already_there_count = {k: [n.label for n in layer.neurons].count(k) for k in already_there}
 
     return already_there_count
 
