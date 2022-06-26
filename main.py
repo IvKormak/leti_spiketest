@@ -198,6 +198,7 @@ class Neuron:
         if not soft:
             self.weights = self.random_weights()
             self.label = ""
+            self.learn = True
         self.input_level = 0
         self.output_level = 0
         self.t_last_spike = -1
@@ -347,7 +348,10 @@ def feed_test_trace_set(model, feed, test_set):
 
 
 def label_neurons(model, category_appearance):
-    neuron_journals, teacher_journals = zip(*model.logs)
+    try:
+        neuron_journals, teacher_journals = zip(*model.logs)
+    except ValueError:
+        return {'labels': {}, 'recognition_error': {}}
     all_traces = list(set(teacher_journals))
     all_neurons = list(set(neuron_journals))
 

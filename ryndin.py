@@ -1,5 +1,4 @@
 import random
-from typing import Type
 
 from main import *
 import AERGen as ag
@@ -10,6 +9,10 @@ class PerceptronNeuron(Neuron):
         super(PerceptronNeuron, self).__init__(model, output_address, inputs, learn, weights, mask)
         self.normalize()
         self.pre = {i: {'potential': 0, 'time': -1} for i in self.inputs}
+
+    def inhibit(self):
+        if self.output_level:
+            self.inhibited_by = self.model.time + self.param_set.t_inhibit
 
     def random_weights(self):
         weights = {w: int(random.random() * (self.param_set.w_max - self.param_set.w_min) + self.param_set.w_min) for w
@@ -176,7 +179,9 @@ def feed_card(model, title, card, offset, verbose=False):
         print("███████")
     time = card[0].time
     time_step = 1
+    visualize_trace(card)
     while card or offset >= 0:
+        print("time:", time)
         events = [event for event in card if event.time == time]
         if events and verbose:
             srow = ''.join(list(map(lambda x: str(x.polarity), events)))
@@ -185,9 +190,8 @@ def feed_card(model, title, card, offset, verbose=False):
             print(time, srow)
         card = card[len(events):]
         feed_events(model, title, events)
-        for o in spike_outputs + perceptron_outputs:
-            if model.state[o] and verbose:
-                print(f"{o}")
+        if 1 in [model.state[o] for o in outputs]:
+            print('spiked:', ' '.join([o for o in outputs if model.state[o]]))
         model.state = {_: 0 for _ in model.state}
         time += time_step
         if not card:
@@ -288,6 +292,39 @@ def ry_train():
     seq = [random.choice(list(numbers.keys())) for _ in range(gps.epoch_length)]
     seq = [(num, random.choice(numbers[num])) for num in seq]
 
+trained_weights = {
+    'left-center': {'i1': 46, 'i2': 62, 'i3': -57, 'i4': -75, 'i5': -66, 'i6': 71},
+    'center-right': {'i1': -14, 'i2': 50, 'i3': 100, 'i4': 124, 'i5': -70, 'i6': -69},
+    'left-right': {'i1': 114, 'i2': -70, 'i3': 61, 'i4': -69, 'i5': 100, 'i6': -49},
+    'left': {'i1': 114, 'i2': 4, 'i3': -61, 'i4': -69, 'i5': 60, 'i6': 60},
+    'center': {'i1': -46, 'i2': 62, 'i3': -57, 'i4': 75, 'i5': -66, 'i6': 71},
+    'right': {'i1': -37, 'i2': -90, 'i3': 39, 'i4': 70, 'i5': 87, 'i6': -62},
+    'all': {'i1': 114, 'i2': 111, 'i3': 61, 'i4': -69, 'i5': -70, 'i6': -49},
+}
+target = set(rows.keys())
+# seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
+# seq = [(num, random.choice(rows[num])) for num in seq]
+test_cards = test_rows
+time_offset = 0
+afterburn = 0
+cooldown = 150
+
+while set(trained_weights.keys()) != target:
+    print('*')
+    for title, card in seq:
+        card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e in
+                card]
+        time_offset = feed_card(m, card, afterburn) + cooldown
+    reset(m, issoft=False)
+    if trained_weights:
+        for label, neuron in zip(list(trained_weights.keys()), m.layers[0].neurons):
+            neuron.label = label
+            neuron.weights = trained_weights[label][0].copy()
+            neuron.train = False
+
+    random.shuffle(test_cards)
+    for neuron in m.layers[-1].neurons:
+        neuron.learn = False
     for title, card in seq:
         card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e
                 in
