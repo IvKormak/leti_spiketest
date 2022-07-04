@@ -199,8 +199,8 @@ spike_nps = NeuronParametersSet(i_thres=700,
                                 w_min=1,
                                 w_max=255,
                                 w_random=1,
-                                a_inc=70,
-                                a_dec=50,
+                                a_inc=15,
+                                a_dec=13,
                                 activation_function="DeltaFunction")
 
 gps = GeneralParametersSet(inhibit_radius=3,
@@ -262,8 +262,6 @@ def ry_train():
         neuron.train = False
 
     random.shuffle(test_cards)
-    for neuron in m.layers[-1].neurons:
-        neuron.learn = False
     for title, card in seq:
         card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e
                 in
@@ -301,7 +299,8 @@ perceptron_weights = {
 }
 
 trained_weights = {
-    
+    'one': {'weights': {'left': 0, 'center': 256, 'right': 0, 'left-center': 100, 'center-right': 0, 'left-right': 0, 'all': 0}, 'error': 0.1},
+ #   'two': {'weights': {'left': 69.57195065086627, 'center': 20.754114313256327, 'right': 221.93907601312176, 'left-center': 114.66091674050269, 'center-right': 106.6093525982916, 'left-right': 54.38264542884882, 'all': 226.84064090177114}, 'error': 0}
 }
 target = set(numbers.keys())
 # seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
