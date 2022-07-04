@@ -1,4 +1,4 @@
-import random
+import random, time
 
 from main import *
 import AERGen as ag
@@ -7,7 +7,6 @@ import AERGen as ag
 class PerceptronNeuron(Neuron):
     def __init__(self, model, output_address, inputs, learn=True, weights=None, mask=None):
         super(PerceptronNeuron, self).__init__(model, output_address, inputs, learn, weights, mask)
-        self.normalize()
         self.pre = {i: {'potential': 0, 'time': -1} for i in self.inputs}
 
     def inhibit(self):
@@ -64,31 +63,8 @@ class PerceptronNeuron(Neuron):
                     self.weights[synapse] += self.param_set.a_inc if self.weights[synapse] > 0 else self.param_set.a_dec
                 for synapse in rest:
                     self.weights[synapse] -= self.param_set.a_dec if self.weights[synapse] > 0 else self.param_set.a_inc
-            self.normalize()
             self.ltp_times = {}
         return self.output_level
-
-    def normalize(self):
-        # if sum([x for x in self.weights.values() if x > 0]) > self.param_set.w_max:
-        #     weights_scale = self.param_set.w_max / sum([x for x in self.weights.values() if x > 0])
-        #     self.weights = {k: v * weights_scale if v > 0 else v for k, v in self.weights.items()}
-        # if sum([x for x in self.weights.values() if x < 0]) < self.param_set.w_min:
-        #     weights_scale = self.param_set.w_min / sum([x for x in self.weights.values() if x < 0])
-        #     self.weights = {k: v * weights_scale if v < 0 else v for k, v in self.weights.items()}
-        for synapse in self.weights:
-            if self.weights[synapse] < self.param_set.w_min:
-                self.weights[synapse] = self.param_set.w_min
-            if self.weights[synapse] > self.param_set.w_max:
-                self.weights[synapse] = self.param_set.w_max
-            pairs = (['i1', 'i4'], ['i2', 'i5'], ['i3', 'i6'],)
-            compl = [_ for _ in pairs if synapse in _][0]
-            compl.remove(synapse)
-            compl = compl[0]
-            scale = self.weights[synapse] + self.weights[compl]
-            if scale > self.param_set.w_max:
-                self.weights[synapse] = int(self.weights[synapse] / scale * self.param_set.w_max)
-            if scale < self.param_set.w_min:
-                self.weights[synapse] = int(self.weights[synapse] / scale * self.param_set.w_min)
 
 
 r = [ag.Event(address="i1", position=ag.Position(x=1, y=1), polarity=1, time=10),
@@ -176,12 +152,10 @@ test_cards = [(k, v[0]) for k, v in numbers.items()] * 3
 def feed_card(model, title, card, offset, verbose=False):
     if verbose:
         print("███████")
-        print("███████")
     time = card[0].time
     time_step = 1
-    visualize_trace(card)
     while card or offset >= 0:
-        print("time:", time)
+        #print("time:", time)
         events = [event for event in card if event.time == time]
         if events and verbose:
             srow = ''.join(list(map(lambda x: str(x.polarity), events)))
@@ -190,8 +164,8 @@ def feed_card(model, title, card, offset, verbose=False):
             print(time, srow)
         card = card[len(events):]
         feed_events(model, title, events)
-        if 1 in [model.state[o] for o in outputs]:
-            print('spiked:', ' '.join([o for o in outputs if model.state[o]]))
+        if 1 in [model.state[o] for o in model.outputs] and verbose:
+            print('spiked:', ' '.join([o for o in model.outputs if model.state[o]]))
         model.state = {_: 0 for _ in model.state}
         time += time_step
         if not card:
@@ -200,12 +174,12 @@ def feed_card(model, title, card, offset, verbose=False):
 
 
 perceptron_inputs = [f'i{_}' for _ in range(1, 7)]
-perceptron_outputs = [f'o{_}' for _ in range(1, 10)]
+perceptron_outputs = list(rows.keys())
 
 spike_inputs = perceptron_outputs
 spike_outputs = [f's{_}' for _ in range(3)]
 
-perceptron_nps = NeuronParametersSet(i_thres=128,
+perceptron_nps = NeuronParametersSet(i_thres=320,
                                      t_ltp=5,
                                      t_refrac=0,
                                      t_inhibit=0,
@@ -217,68 +191,52 @@ perceptron_nps = NeuronParametersSet(i_thres=128,
                                      a_dec=5,
                                      activation_function="DeltaFunction")
 
-spike_nps = NeuronParametersSet(i_thres=1400,
+spike_nps = NeuronParametersSet(i_thres=700,
                                 t_ltp=50,
-                                t_refrac=100,
-                                t_inhibit=30,
+                                t_refrac=400,
+                                t_inhibit=50,
                                 t_leak=100,
                                 w_min=1,
                                 w_max=255,
                                 w_random=1,
-                                a_inc=15,
-                                a_dec=10,
+                                a_inc=70,
+                                a_dec=50,
                                 activation_function="DeltaFunction")
 
 gps = GeneralParametersSet(inhibit_radius=3,
                            epoch_length=50,
                            execution_thres=1,
                            terminate_on_epoch=3,
-                           wta=0,
+                           wta=1,
                            false_positive_thres=0.3,
                            mask=None)
 
-# seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
-# seq = [(num, random.choice(rows[num])) for num in seq]
-MI = -127
-MA = 128
-weights = [
-    {'i1': MI, 'i2': MI, 'i3': MA, 'i4': MA, 'i5': MA, 'i6': MI},
-    {'i1': MI, 'i2': MA, 'i3': MI, 'i4': MA, 'i5': MI, 'i6': MA},
-    {'i1': MA, 'i2': MI, 'i3': MI, 'i4': MI, 'i5': MA, 'i6': MA},
-    {'i1': MI, 'i2': MA, 'i3': MA, 'i4': MA, 'i5': MI, 'i6': MI},
-    {'i1': MA, 'i2': MI, 'i3': MA, 'i4': MI, 'i5': MA, 'i6': MI},
-    {'i1': MA, 'i2': MA, 'i3': MI, 'i4': MI, 'i5': MI, 'i6': MA},
-    {'i1': MA, 'i2': MA, 'i3': MA, 'i4': MI, 'i5': MI, 'i6': MI},
-]
-
+afterburn = 0
+cooldown = 150  
 
 def ry_train():
-    #    test_cards = test_rows
-    time_offset = 0
-    afterburn = 0
-    cooldown = 150
 
+    time_offset = 0
     m = Model(perceptron_nps, gps,
               state={_: 0 for _ in perceptron_inputs + perceptron_outputs + spike_outputs},
               layers=[],
               outputs=spike_outputs
               )
 
-    trained_perceptron_layer = LayerStruct(shape=[9, 1], per_field_shape=[3, 1],
+    trained_perceptron_layer = LayerStruct(shape=[7, 1], per_field_shape=[3, 1],
                                            neurons=[PerceptronNeuron(model=m,
                                                                      output_address=o,
                                                                      inputs=perceptron_inputs,
                                                                      learn=False,
-                                                                     mask=gps.mask)
+                                                                     mask=gps.mask,
+                                                                     weights=perceptron_weights[o])
                                                     for o in perceptron_outputs]
                                            )
 
-    for w, n in zip(weights, trained_perceptron_layer.neurons):
-        n.set_weights(w)
 
     m.layers.append(trained_perceptron_layer)
 
-    m.layers.append(LayerStruct(shape=[3, 1], per_field_shape=[9, 1],
+    m.layers.append(LayerStruct(shape=[3, 1], per_field_shape=[7, 1],
                                 neurons=[Neuron(model=m,
                                                 output_address=o,
                                                 inputs=spike_inputs,
@@ -292,35 +250,16 @@ def ry_train():
     seq = [random.choice(list(numbers.keys())) for _ in range(gps.epoch_length)]
     seq = [(num, random.choice(numbers[num])) for num in seq]
 
-trained_weights = {
-    'left-center': {'i1': 46, 'i2': 62, 'i3': -57, 'i4': -75, 'i5': -66, 'i6': 71},
-    'center-right': {'i1': -14, 'i2': 50, 'i3': 100, 'i4': 124, 'i5': -70, 'i6': -69},
-    'left-right': {'i1': 114, 'i2': -70, 'i3': 61, 'i4': -69, 'i5': 100, 'i6': -49},
-    'left': {'i1': 114, 'i2': 4, 'i3': -61, 'i4': -69, 'i5': 60, 'i6': 60},
-    'center': {'i1': -46, 'i2': 62, 'i3': -57, 'i4': 75, 'i5': -66, 'i6': 71},
-    'right': {'i1': -37, 'i2': -90, 'i3': 39, 'i4': 70, 'i5': 87, 'i6': -62},
-    'all': {'i1': 114, 'i2': 111, 'i3': 61, 'i4': -69, 'i5': -70, 'i6': -49},
-}
-target = set(rows.keys())
-# seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
-# seq = [(num, random.choice(rows[num])) for num in seq]
-test_cards = test_rows
-time_offset = 0
-afterburn = 0
-cooldown = 150
+    for neuron in m.layers[0].neurons:
+        neuron.reset(soft=True)
 
-while set(trained_weights.keys()) != target:
-    print('*')
-    for title, card in seq:
-        card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e in
-                card]
-        time_offset = feed_card(m, card, afterburn) + cooldown
-    reset(m, issoft=False)
-    if trained_weights:
-        for label, neuron in zip(list(trained_weights.keys()), m.layers[0].neurons):
-            neuron.label = label
-            neuron.weights = trained_weights[label][0].copy()
-            neuron.train = False
+    for neuron in m.layers[1].neurons:
+        neuron.reset(soft=False)
+
+    for label, neuron in zip(list(trained_weights.keys()), m.layers[1].neurons):
+        neuron.label = label
+        neuron.weights = trained_weights[label]['weights'].copy()
+        neuron.train = False
 
     random.shuffle(test_cards)
     for neuron in m.layers[-1].neurons:
@@ -329,7 +268,7 @@ while set(trained_weights.keys()) != target:
         card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e
                 in
                 card]
-        time_offset = feed_card(m, title, card, afterburn) + cooldown
+        time_offset = feed_card(m, title, card, -1) + cooldown
     reset(m, issoft=True)
     random.shuffle(test_cards)
     for neuron in m.layers[-1].neurons:
@@ -340,10 +279,45 @@ while set(trained_weights.keys()) != target:
         card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e
                 in
                 card]
-        time_offset = feed_card(m, title, card, afterburn) + cooldown
+        time_offset = feed_card(m, title, card, -1) + cooldown
 
     label_neurons(m, 3)
+
     return m
+
+# seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
+# seq = [(num, random.choice(rows[num])) for num in seq]
+MI = 0
+MA = 128
+    
+perceptron_weights = {
+    'left-center': {'i1': MA, 'i2': MA, 'i3': MI, 'i4': MI, 'i5': MI, 'i6': MA},
+    'center-right': {'i1': MI, 'i2': MA, 'i3': MA, 'i4': MA, 'i5': MI, 'i6': MI},
+    'left-right': {'i1': MA, 'i2': MI, 'i3': MA, 'i4': MI, 'i5': MA, 'i6': MI},
+    'left': {'i1': MA, 'i2': MI, 'i3': MI, 'i4': MI, 'i5': MA, 'i6': MA},
+    'center':  {'i1': MI, 'i2': MA, 'i3': MI, 'i4': MA, 'i5': MI, 'i6': MA},
+    'right': {'i1': MI, 'i2': MI, 'i3': MA, 'i4': MA, 'i5': MA, 'i6': MI},
+    'all': {'i1': MA, 'i2': MA, 'i3': MA, 'i4': MI, 'i5': MI, 'i6': MI},
+}
+
+trained_weights = {
+    
+}
+target = set(numbers.keys())
+# seq = [random.choice(list(rows.keys())) for _ in range(gps.epoch_length)]
+# seq = [(num, random.choice(rows[num])) for num in seq]
+
+while not set(trained_weights.keys()) >= target:
+    trained = [ry_train() for _ in range(10)]
+    for model in trained:
+        for neuron in model.layers[1].neurons:
+            if -0.1 < neuron.error < 0.1:
+                if neuron.label in trained_weights:
+                    if neuron.error < trained_weights[neuron.label]['error']:
+                        trained_weights[neuron.label] = {'weights': neuron.weights, 'error': neuron.error}
+                else:
+                    trained_weights[neuron.label] = {'weights': neuron.weights, 'error': neuron.error}
+    print(trained_weights)
 
 
 target = Model(perceptron_nps, gps,
@@ -352,21 +326,22 @@ target = Model(perceptron_nps, gps,
                outputs=spike_outputs
                )
 
-trained_perceptron_layer = LayerStruct(shape=[9, 1], per_field_shape=[3, 1],
+trained_perceptron_layer = LayerStruct(shape=[7, 1], per_field_shape=[3, 1],
                                        neurons=[PerceptronNeuron(model=target,
                                                                  output_address=o,
                                                                  inputs=perceptron_inputs,
                                                                  learn=False,
-                                                                 mask=gps.mask)
+                                                                 mask=gps.mask,
+                                                                 weights=perceptron_weights[o])
                                                 for o in perceptron_outputs]
                                        )
 
-for w, n in zip(weights, trained_perceptron_layer.neurons):
+for w, n in zip(perceptron_weights.values(), trained_perceptron_layer.neurons):
     n.set_weights(w)
 
 target.layers.append(trained_perceptron_layer)
 
-target.layers.append(LayerStruct(shape=[3, 1], per_field_shape=[9, 1],
+target.layers.append(LayerStruct(shape=[3, 1], per_field_shape=[7, 1],
                                  neurons=[Neuron(model=target,
                                                  output_address=o,
                                                  inputs=spike_inputs,
@@ -377,7 +352,7 @@ target.layers.append(LayerStruct(shape=[3, 1], per_field_shape=[9, 1],
                                  )
                      )
 
-trained = [ry_train() for _ in range(10)]
+
 labels = {k: 0 for k in numbers.keys()}
 print(fill_model_from_pool(target, trained))
 
@@ -387,7 +362,7 @@ for title, card in test_cards:
     card = [ag.Event(address=e.address, position=e.position, polarity=e.polarity, time=e.time + time_offset) for e
             in
             card]
-    time_offset = feed_card(target, title, card, 10, True)
+    time_offset = feed_card(target, title, card, 10, True) + cooldown
 
 for neuron in target.layers[-1].neurons:
     if neuron.label:
